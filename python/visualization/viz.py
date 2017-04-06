@@ -1,3 +1,10 @@
+# pip install pyopengl
+
+# Simple 2D OpenGL visualizer.
+# Renders all shapes in the scene
+# Resizes ortho to keep everything in view
+# Placeholders to mouse and keyboard events
+
 from OpenGL.GL import *
 from OpenGL.GLUT import *
 from OpenGL.GLU import *
@@ -11,14 +18,22 @@ width, height = 600, 600
 TARGET_FPS = 30.0
 frame = 0
 
+# some random points
 scene = [ shapes.Shape([-0.5 + random.random()], [- 0.5 + random.random()]) for _ in xrange(100) ]
 
+# a quad
 scene.append(
     shapes.Shape(
         [0.5, 0.5, -0.5, -0.5],
         [0.5, -0.5, -0.5, 0.5],
     )
 )
+
+def mouseHandler( button, state, x, y ):
+    print button, state, x, y
+
+def keyboardHandler(key, x, y):
+    print key, x, y
 
 def refresh2d(width, height, bound):
     glViewport(0, 0, width, height)
@@ -37,7 +52,7 @@ def draw():
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
     glLoadIdentity()
 
-    # find the bounds of everything in the scene to keep everythin in view
+    # find the bounds of everything in the scene to keep everything in view
     bound = max([ shape.get_bound() for shape in scene ])
 
     refresh2d(width, height, bound)
@@ -54,11 +69,6 @@ def draw():
     glutSwapBuffers()
     return True
 
-def mouseHandler( button, state, x, y ):
-    print button, state, x, y
-
-def keyboardHandler(key, x, y):
-    print key, x, y
 
 glutInit()
 glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_ALPHA | GLUT_DEPTH)
