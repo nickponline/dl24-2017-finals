@@ -32,7 +32,13 @@ scene.append(
 def mouseHandler( button, state, x, y ):
     print button, state, x, y
 
+def mouseWheelHandler(wheel, direction, x, y):
+    print wheel, direction, x, y
+
 def keyboardHandler(key, x, y):
+    print key, x, y
+
+def specialKeyboardHandler(key, x, y):
     print key, x, y
 
 def refresh2d(width, height, bound):
@@ -46,7 +52,8 @@ def refresh2d(width, height, bound):
 def draw():
     global frame
 
-    if time.time() - frame < 1.0 / TARGET_FPS: return False
+    last_fps = 1 / (time.time() - frame)
+    if last_fps > TARGET_FPS: return False
     frame = time.time()
 
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
@@ -60,6 +67,9 @@ def draw():
     for shape in scene:
         shape.draw()
 
+    # Render FPS counter
+    glWindowPos2f(0,0)
+    glutBitmapString(GLUT_BITMAP_TIMES_ROMAN_24, 'FPS: %d' % (int(last_fps),))
 
     # move one of the points right
     # scene should resize to keep it in view
@@ -77,6 +87,8 @@ glutInitWindowPosition(0, 0)
 window = glutCreateWindow("Visualizer")
 glutDisplayFunc(draw)
 glutKeyboardFunc(keyboardHandler)
+glutSpecialFunc(specialKeyboardHandler)
 glutMouseFunc(mouseHandler)
+glutMouseWheelFunc(mouseWheelHandler)
 glutIdleFunc(draw)
 glutMainLoop()
