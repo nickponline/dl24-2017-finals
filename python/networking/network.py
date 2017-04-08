@@ -54,7 +54,7 @@ class EchoHandler(asyncore.dispatcher):
     def handle_write(self):
         """Write as much as possible of the most recent message we have received."""
         data = self.data_to_write.pop()
-        sent = self.send(data[:self.chunk_size])
+        sent = self.send(data[:self.chunk_size].encode('utf-8'))
         if sent < len(data):
             remaining = data[sent:]
             self.data.to_write.append(remaining)
@@ -64,7 +64,7 @@ class EchoHandler(asyncore.dispatcher):
 
     def handle_read(self):
         """Read an incoming message from the client and put it into our outgoing queue."""
-        data = self.recv(self.chunk_size)
+        data = self.recv(self.chunk_size).decode('utf-8')
         self.logger.debug('handle_read() -> (%d) "%s"', len(data), data)
         self.data_to_write.insert(0, data)
 
@@ -109,12 +109,12 @@ class EchoClient(asyncore.dispatcher):
         return bool(self.to_send)
 
     def handle_write(self):
-        sent = self.send(self.to_send[:self.chunk_size])
+        sent = self.send(self.to_send[:self.chunk_size].encode('utf-8'))
         self.logger.debug('handle_write() -> (%d) "%s"', sent, self.to_send[:sent])
         self.to_send = self.to_send[sent:]
 
     def handle_read(self):
-        data = self.recv(self.chunk_size)
+        data = self.recv(self.chunk_size).decode('utf-8')
         self.logger.debug('handle_read() -> (%d) "%s"', len(data), data)
         self.received_data.append(data)
 
