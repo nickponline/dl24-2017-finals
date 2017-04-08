@@ -1,6 +1,8 @@
+from __future__ import absolute_import
 from OpenGL.GL import *
 from OpenGL.GLUT import *
 from OpenGL.GLU import *
+from six.moves import zip
 
 class Shape(object):
 

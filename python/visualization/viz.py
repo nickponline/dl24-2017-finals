@@ -5,6 +5,8 @@
 # Resizes ortho to keep everything in view
 # Placeholders to mouse and keyboard events
 
+from __future__ import absolute_import
+from __future__ import print_function
 from OpenGL.GL import *
 from OpenGL.GLUT import *
 from OpenGL.GLU import *
@@ -12,6 +14,7 @@ from OpenGL.GLU import *
 import time
 import random
 import shapes
+from six.moves import range
 
 window = 0
 width, height = 600, 600
@@ -19,7 +22,7 @@ TARGET_FPS = 30.0
 frame = 0
 
 # some random points
-scene = [ shapes.Shape([-0.5 + random.random()], [- 0.5 + random.random()]) for _ in xrange(100) ]
+scene = [ shapes.Shape([-0.5 + random.random()], [- 0.5 + random.random()]) for _ in range(100) ]
 
 # a quad
 scene.append(
@@ -30,16 +33,16 @@ scene.append(
 )
 
 def mouseHandler( button, state, x, y ):
-    print button, state, x, y
+    print(button, state, x, y)
 
 def mouseWheelHandler(wheel, direction, x, y):
-    print wheel, direction, x, y
+    print(wheel, direction, x, y)
 
 def keyboardHandler(key, x, y):
-    print key, x, y
+    print(key, x, y)
 
 def specialKeyboardHandler(key, x, y):
-    print key, x, y
+    print(key, x, y)
 
 def refresh2d(width, height, bound):
     glViewport(0, 0, width, height)
@@ -69,7 +72,7 @@ def draw():
 
     # Render FPS counter
     glWindowPos2f(0,0)
-    glutBitmapString(GLUT_BITMAP_TIMES_ROMAN_24, 'FPS: %d' % (int(last_fps),))
+    glutBitmapString(GLUT_BITMAP_TIMES_ROMAN_24, b'FPS: %d' % (int(last_fps),))
 
     # move one of the points right
     # scene should resize to keep it in view
