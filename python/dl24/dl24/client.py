@@ -3,6 +3,7 @@ import logging
 import functools
 import inspect
 import re
+import os
 
 
 class Failure(RuntimeError):
@@ -25,6 +26,13 @@ class ProtocolError(RuntimeError):
 
     def __str__(self):
         return 'Failed to parse "{}": {}'.format(self.data, self.message)
+
+
+def add_arguments(parser):
+    """Add arguments for endpoint, username and password to an argument parser."""
+    parser.add_argument('endpoint', metavar='HOST:PORT', help='Remote server')
+    parser.add_argument('--user', help='Login name [$DL24_USER]')
+    parser.add_argument('--pass', dest='password', help='Password [$DL24_PASS]')
 
 
 def command(name):
@@ -58,8 +66,13 @@ class ClientBase(object):
     class method :meth:`create`.
     """
 
-    def __init__(self):
-        pass
+    def __init__(self, host, port, user, password):
+        self.reader = None
+        self.writer = None
+        self.host = host
+        self.port = port
+        self.user = user
+        self.password = password
 
     async def readline(self, expected=None, parse_failed=False):
         """Retrieves a single line, with the trailing newline removed.
@@ -110,21 +123,45 @@ class ClientBase(object):
         data = (line + '\n').encode('utf-8')
         self.writer.write(data)
 
-    @classmethod
-    async def create(cls, host, port, login, password):
-        self = cls()
+    async def connect(self):
+        """Asynchronously create a client and connect it to the server."""
         self.reader, self.writer = await asyncio.open_connection(
-            host, port, limit=2**20)
+            self.host, self.port, limit=2**20)
         # Do the login protocol
-        await self.readline(expected='LOGIN')
-        self.writeline(login)
-        await self.readline(expected='PASS')
-        self.writeline(password)
-        await self.read_ok()
-        return self
+        prompt = await self.readline(expected=re.compile('LOGIN|PROXY-NOLOGIN'))
+        if prompt == 'LOGIN':
+            self.writeline(self.user)
+            await self.readline(expected='PASS')
+            self.writeline(self.password)
+            await self.read_ok()
+
+    @classmethod
+    def connect_args(cls, args):
+        """Extract command-line arguments to pass to :meth:`create`.
+
+        The `args` are returned from a :cls:`~argparse.ArgumentParser`
+        which has been augmented by :func:`add_arguments`.
+        """
+        if ':' not in args.endpoint:
+            raise ValueError('Endpoint must have the form HOST:PORT')
+        host, port = args.endpoint.rsplit(':', 1)
+        if args.user is not None:
+            user = args.user
+        else:
+            user = os.environ.get('DL24_USER')
+        if user is None:
+            raise ValueError('User not set')
+        if args.password is not None:
+            password = args.password
+        else:
+            password = os.environ.get('DL24_PASS')
+        if password is None:
+            raise ValueError('Password not set')
+        return host, port, user, password
 
     def close(self):
-        self.writer.close()
+        if self.writer is not None:
+            self.writer.close()
 
     @command('WAIT')
     async def wait(self):

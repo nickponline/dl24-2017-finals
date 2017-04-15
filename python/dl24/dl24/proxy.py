@@ -5,6 +5,7 @@ import logging
 import argparse
 import sys
 import time
+from . import client as _client
 
 
 LIMIT = 2 ** 20    # Maximum line length that can be handled without crashing
@@ -17,7 +18,7 @@ class UsageError(RuntimeError):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('remote', metavar='HOST:PORT', help='Remote address')
+    _client.add_arguments(parser)
     parser.add_argument('port', metavar='PORT', type=int, help='Local port')
     parser.add_argument('--log', metavar='FILE', help='Log all communication to file')
     return parser.parse_args()
@@ -43,6 +44,8 @@ class Client(object):
         peer = self.writer.get_extra_info('peername')
         _logger.info('Client %s connected', peer)
         proxy.clients.add(self)
+        self.writer.write(b'PROXY-NOLOGIN\n')
+        await self.writer.drain()
         try:
             while True:
                 record = await self.get_record()
@@ -57,13 +60,10 @@ class Client(object):
             proxy.clients.remove(self)
 
 
-class Proxy(object):
-    def __init__(self, remote_host, remote_port, local_port, log_filename):
-        self.remote_host = remote_host
-        self.remote_port = remote_port
+class Proxy(_client.ClientBase):
+    def __init__(self, host, port, user, password, local_port, log_filename):
+        super(Proxy, self).__init__(host, port, user, password)
         self.local_port = local_port
-        self.reader = None
-        self.writer = None
         self.clients = set()
         if log_filename is None:
             self.log = None
@@ -94,10 +94,10 @@ class Proxy(object):
         return await self.reader.readline()
 
     async def run(self):
+        server = None
         try:
-            _logger.info('Connecting to %s:%s', self.remote_host, self.remote_port)
-            self.reader, self.writer = await asyncio.open_connection(
-                self.remote_host, self.remote_port, limit=LIMIT)
+            _logger.info('Connecting to %s:%s', self.host, self.port)
+            await self.connect()
             _logger.info('Connected')
             _logger.info('Listening on port %d', self.local_port)
             server = await asyncio.start_server(self.server_cb, port=self.local_port,
@@ -113,27 +113,27 @@ class Proxy(object):
                     # it all up. TODO: kick off unresponsive clients.
             _logger.info('Server disconnected, shutting down')
         finally:
-            server.close()
+            if server is not None:
+                server.close()
             if self.log:
                 self.log.close()
+            self.close()
 
 
-async def main():
+async def async_main():
     args = parse_args()
-    remote = args.remote.split(':')
-    if len(remote) != 2:
-        raise UsageError('Remote is not in the form host:port')
-    proxy = Proxy(remote[0], remote[1], args.port, args.log)
+    connect_args = Proxy.connect_args(args)
+    proxy = Proxy(*connect_args, args.port, args.log)
     await proxy.run()
     return 0
 
 
-if __name__ == '__main__':
+def main():
     logging.basicConfig(
         format='%(asctime)s %(levelname)s %(filename)s:%(lineno)d: %(message)s',
         level='INFO')
     try:
-        ret = asyncio.get_event_loop().run_until_complete(main())
+        ret = asyncio.get_event_loop().run_until_complete(async_main())
         sys.exit(ret)
     except (RuntimeError, ConnectionRefusedError) as e:
         print(e)

@@ -9,5 +9,10 @@ setup(
     install_requires=[],
     python_requires='>=3.5',
     author='Bruce Merry, Carl Hultquist, Nicholas Pilkington',
-    version='2017.0'
+    version='2017.0',
+    entry_points={
+        'console_scripts': [
+            'dl24proxy = dl24.proxy:main'
+        ]
+    }
 )
