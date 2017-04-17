@@ -19,17 +19,22 @@ class ManualEventSource(object):
 
     The user calls the instance to trigger the event.
     """
-    def __init__(self, callbacks=None):
+    def __init__(self, callbacks=None, trigger_on_start=True):
         if callbacks is None:
             self.callbacks = []
         else:
             self.callbacks = list(callbacks)
+        self._running = False
+        self._trigger_on_start = True
 
     def start(self):
-        pass
+        if not self._running:
+            self._running = True
+            if self._trigger_on_start:
+                self()
 
     def stop(self):
-        pass
+        self._running = False
 
     def add_callback(self, func, *args, **kwargs):
         self.callbacks.append((func, args, kwargs))
@@ -43,6 +48,8 @@ class ManualEventSource(object):
                 self.callbacks.pop(funcs.index(func))
 
     def __call__(self):
+        if not self._running:
+            return
         for func, args, kwargs in self.callbacks:
             ret = func(*args, **kwargs)
             if ret == False:
@@ -66,7 +73,10 @@ class VisWindow(Gtk.Window):
         self.event_source = ManualEventSource()
         self.add_artists(self.axes.plot([0.5], [0.7], 'o'))
         self.animation = matplotlib.animation.FuncAnimation(
-            self.figure, self.animate, event_source=self.event_source)
+            self.figure, self.animate,
+            event_source=self.event_source,
+            init_func=lambda: self.artists,
+            blit=False)
 
     def add_artists(self, artists):
         self.artists.extend(artists)
