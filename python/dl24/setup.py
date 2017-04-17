@@ -7,6 +7,9 @@ setup(
     description='Utilities for Deadline24 contest',
     packages=find_packages(),
     install_requires=[],
+    extras_require={
+        'vis': ['cairocffi', 'matplotlib', 'gbulb']
+    },
     python_requires='>=3.5',
     author='Bruce Merry, Carl Hultquist, Nicholas Pilkington',
     version='2017.0',
