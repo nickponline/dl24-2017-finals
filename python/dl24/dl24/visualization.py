@@ -50,8 +50,8 @@ class ManualEventSource(object):
 
 
 class Window(Gtk.Window):
-    def __init__(self):
-        super(Window, self).__init__(title='Demo')
+    def __init__(self, *args, **kwargs):
+        super(Window, self).__init__(*args, **kwargs)
         self.connect('delete-event', lambda *args: asyncio.get_event_loop().stop())
         self.figure = matplotlib.figure.Figure(tight_layout=True)
         self.axes = self.figure.add_subplot(1, 1, 1)
@@ -82,9 +82,15 @@ class Window(Gtk.Window):
         self.artists.extend(artists)
         self.event_source()
 
-    def _animate(self, framedata):
+    def autoscale_view(self):
+        """Change the view limits on self.axes to fit the data. This can
+        be replaced in derived classes.
+        """
         self.axes.relim()
         self.axes.update_datalim(self.min_bounds)
         self.axes.autoscale_view()
+
+    def _animate(self, framedata):
+        self.autoscale_view()
         return self.artists
 
