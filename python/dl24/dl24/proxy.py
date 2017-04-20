@@ -4,7 +4,9 @@ import asyncio
 import logging
 import argparse
 import sys
-import time
+import datetime
+import enum
+import json
 from . import client as _client
 
 
@@ -14,6 +16,47 @@ _logger = logging.getLogger(__name__)
 
 class UsageError(RuntimeError):
     pass
+
+
+class Direction(enum.Enum):
+    TO_SERVER = 0
+    TO_CLIENT = 1
+
+
+class Record(object):
+    """Encapsulates a message sent through the proxy.
+
+    It has a serialisation method for transmission to the log file, as well as
+    deserialisation to read back the lines. Each record is written on a single
+    line in the file, even if it has embedded newlines.
+    """
+    TIME_FORMAT = '%Y-%m-%dT%H:%M:%S.%f%z'
+
+    def __init__(self, direction, message, timestamp=None):
+        if timestamp is None:
+            timestamp = datetime.datetime.now(datetime.timezone.utc)
+        self.direction = direction
+        self.message = message
+        self.timestamp = timestamp.astimezone(datetime.timezone.utc)
+
+    def __str__(self):
+        message_str = self.message.decode('utf-8', errors='surrogateescape')
+        return '{} {} {}'.format(self.timestamp.strftime(self.TIME_FORMAT),
+                                 '>' if self.direction == Direction.TO_SERVER else '<',
+                                 json.dumps(message_str))
+
+    @classmethod
+    def parse(cls, raw):
+        time_str, dir_str, message_str = raw.split(' ', 2)
+        dir_map = {'>': Direction.TO_SERVER, '<': Direction.TO_CLIENT}
+        if dir_str not in dir_map:
+            raise ValueError('Invalid direction character "{}"'.format(dir_str))
+        message = json.loads(message_str)
+        if not isinstance(message, str):
+            raise ValueError('Message is not a JSON str: "{}"'.format(message))
+        return Record(dir_map[dir_str],
+                      message.encode('utf-8', errors='surrogateescape'),
+                      datetime.datetime.strptime(time_str, cls.TIME_FORMAT))
 
 
 def parse_args():
@@ -52,7 +95,7 @@ class Client(object):
                 if record == b'' and self.reader.at_eof():
                     break
                 proxy.writer.write(record)
-                proxy.append_to_log('>', record)
+                proxy.append_to_log(Record(Direction.TO_SERVER, record))
                 await proxy.writer.drain()
         finally:
             _logger.info('Client %s disconnected', peer)
@@ -68,15 +111,11 @@ class Proxy(_client.ClientBase):
         if log_filename is None:
             self.log = None
         else:
-            self.log = open(log_filename, 'wb', buffering=4096)
+            self.log = open(log_filename, 'w', encoding='utf-8', buffering=4096)
 
-    def append_to_log(self, direction, data):
-        if self.log and data:
-            header = '{} {} '.format(time.asctime(), direction).encode('utf-8')
-            self.log.write(header)
-            self.log.write(data)
-            if data[-1:] != b'\n':
-                self.log.write(b'\n')
+    def append_to_log(self, record):
+        if self.log:
+            print(record, file=self.log)
             self.log.flush()
 
     async def server_cb(self, reader, writer):
@@ -106,7 +145,7 @@ class Proxy(_client.ClientBase):
                 record = await self.get_record()
                 if record == b'' and self.reader.at_eof():
                     break
-                self.append_to_log('<', record)
+                self.append_to_log(Record(Direction.TO_CLIENT, record))
                 for client in self.clients:
                     client.writer.write(record)
                     # We don't drain, since then an unresponsive client could jam
@@ -129,9 +168,13 @@ async def async_main():
 
 
 def main():
+    # Workaround for vext installing log handlers early
+    root_logger = logging.getLogger()
+    while root_logger.handlers:
+        root_logger.removeHandler(root_logger.handlers[-1])
     logging.basicConfig(
         format='%(asctime)s %(levelname)s %(filename)s:%(lineno)d: %(message)s',
-        level='INFO')
+        level=logging.INFO)
     try:
         ret = asyncio.get_event_loop().run_until_complete(async_main())
         sys.exit(ret)
