@@ -1,0 +1,30 @@
+numpy
+scipy
+matplotlib
+jinja2
+ipython
+h5py
+nose
+nose-ignore-docstring
+sphinx
+decorator
+coverage
+cffi
+tornado
+astropy
+ipdb
+pkgconfig
+pandas
+pillow
+aiohttp
+watchdog
+pybind11
+jsonschema
+katcp
+prometheus-client
+manhole
+shapely
+redis
+async-timeout
+# hiredis
+# numba

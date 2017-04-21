@@ -32,6 +32,7 @@ class FileReadTransport(asyncio.ReadTransport):
         self._protocol = protocol
         self._unpaused = asyncio.Event(loop=loop)
         self._modified = asyncio.Event(loop=loop)
+        self._task = None
         self._closing = False
         self._file = open(filename, 'rb')
         self._task = loop.create_task(self._reader())
@@ -54,7 +55,7 @@ class FileReadTransport(asyncio.ReadTransport):
         self._unpaused.set()
 
     def close(self):
-        if not self._task.done():
+        if self._task is not None and not self._task.done():
             self._task.cancel()
         if self._observer is not None:
             self._observer.stop()
