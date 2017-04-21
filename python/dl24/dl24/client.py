@@ -40,6 +40,7 @@ def add_arguments(parser):
     parser.add_argument('endpoint', metavar='HOST:PORT', help='Remote server')
     parser.add_argument('--user', help='Login name [$DL24_USER]')
     parser.add_argument('--pass', dest='password', help='Password [$DL24_PASS]')
+    parser.add_argument('--prometheus-port', type=int, help='Port for Prometheus HTTP server')
 
 
 def command(name):
@@ -178,6 +179,10 @@ class ClientBase(object):
             password = os.environ.get('DL24_PASS')
         if password is None:
             raise ValueError('Password not set')
+
+        if args.prometheus_port is not None:
+            prometheus_client.start_http_server(args.prometheus_port)
+
         return host, port, user, password
 
     def close(self):
