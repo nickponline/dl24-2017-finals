@@ -4,6 +4,13 @@ import functools
 import inspect
 import re
 import os
+import prometheus_client
+
+
+COMMAND_TIME = prometheus_client.Summary('dl24_command_time_seconds', 'Time between issuing command and receiving reply', labelnames=['command'])
+RESPONSES_OK = prometheus_client.Counter('dl24_responses_ok_total', 'Total number of successful requests', labelnames=['command'])
+RESPONSES_FAILED = prometheus_client.Counter('dl24_responses_failed_total', 'Total number of commands with failed responses', labelnames=['command'])
+RESPONSES_PROTOCOL_ERROR = prometheus_client.Counter('dl24_responses_protocol_error_total', 'Total number of commands with protocol errors in response', labelnames=['command'])
 
 
 class Failure(RuntimeError):
@@ -52,9 +59,23 @@ def command(name):
             fields = [name]
             for arg in bind.args[1:]:
                 fields.append(str(arg))
-            self.writeline(' '.join(fields))
-            await self.read_ok()
-            return await func(*bind.args, **bind.kwargs)
+            with COMMAND_TIME.labels(name).time():
+                self.writeline(' '.join(fields))
+                try:
+                    await self.read_ok()
+                    ret = await func(*bind.args, **bind.kwargs)
+                except Failure:
+                    RESPONSES_FAILED.labels(name).inc()
+                    raise
+                except ProtocolError:
+                    RESPONSES_PROTOCOL_ERROR.labels(name).inc()
+                    raise
+                RESPONSES_OK.labels(name).inc()
+                return ret
+        # Force the labels to exist immediately
+        RESPONSES_FAILED.labels(name)
+        RESPONSES_PROTOCOL_ERROR.labels(name)
+        RESPONSES_OK.labels(name)
         return wrapper
     return decorator
 

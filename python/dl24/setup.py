@@ -6,7 +6,7 @@ setup(
     name='dl24',
     description='Utilities for Deadline24 contest',
     packages=find_packages(),
-    install_requires=[],
+    install_requires=['prometheus_client', 'watchdog'],
     extras_require={
         'vis': ['cairocffi', 'matplotlib', 'gbulb']
     },
