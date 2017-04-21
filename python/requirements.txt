@@ -25,5 +25,6 @@ manhole
 shapely
 redis
 async-timeout
-# hiredis
-# numba
+hiredis
+numba
+pulp
