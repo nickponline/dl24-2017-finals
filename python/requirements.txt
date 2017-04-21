@@ -20,7 +20,6 @@ aiohttp
 watchdog
 pybind11
 jsonschema
-katcp
 prometheus-client
 manhole
 shapely
