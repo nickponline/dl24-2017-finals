@@ -443,7 +443,11 @@ public class AGridCulture
                         Worker worker = new Worker(id, x, y);
                         int numStored = sc.nextInt();
                         for (int j = 0; j < numStored; j++) {
-                            worker.addToStorage(sc.next().charAt(0));
+                            char Cm = sc.next().charAt(0);
+                            int Dm = sc.nextInt();
+                            for (int k = 0; k < Dm; k++) {
+                                worker.addToStorage(Cm);
+                            }
                         }
                         worker.recomputeDistances();
                         workers.add(worker);
@@ -939,7 +943,7 @@ public class AGridCulture
     {
         for (int i = 0; i < workers.size(); i++) {
             Worker worker = workers.get(i);
-            if (map[worker.x][worker.y] != '.' && map[worker.x][worker.y] != C && worker.numStored < G && nWorkers[worker.x][worker.y] == 1 && canExecuteCommand()) {
+            if (map[worker.x][worker.y] != '.' && map[worker.x][worker.y] != '#' && map[worker.x][worker.y] != C && worker.numStored < G && nWorkers[worker.x][worker.y] == 1 && canExecuteCommand()) {
                 client.writeCommand("PUT", worker.id, C);
                 worker.addToStorage(map[worker.x][worker.y]);
                 System.err.println("Replaced marker of team " + map[worker.x][worker.y] + " at " + worker.x + " " + worker.y);
