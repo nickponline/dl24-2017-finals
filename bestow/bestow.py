@@ -440,8 +440,6 @@ async def play_game(shelf, client):
     shared = np.empty((world.size_shared,) * 2, np.int8)
     own = np.empty((world.size_own,) * 3, np.int8)
     while True:
-        gc.collect()
-        await client.wait()
         logging.info('Starting turn')
         old_state = state
         state = await client.get_match_info()
@@ -566,6 +564,8 @@ async def play_game(shelf, client):
                         logging.warn('Could not complete cube due to command limit')
                 biggest = biggest_cube(own)
                 BIGGEST_CUBE_GAUGE.labels('me').set(biggest)
+        gc.collect()
+        await client.wait()
 
 
 async def main():
