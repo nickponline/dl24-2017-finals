@@ -118,6 +118,15 @@ class MatchInfo(object):
         return self.me.effort + self.you.effort
 
 
+def check_iterator_done(it, line):
+    try:
+        next(it)
+    except StopIteration:
+        return
+    else:
+        raise ProtocolError('More values than expected in line', line)
+
+
 class Piece(object):
     def __init__(self, line):
         fields = line.split()
@@ -135,6 +144,7 @@ class Piece(object):
         self.price = int(next(it))
         self.value = int(next(it))
         self.effort = int(next(it))
+        check_iterator_done(it, line)
 
 
 class Piece2D(object):
@@ -390,11 +400,17 @@ async def play_game(shelf, client):
             avail = [pieces[idx] for idx in avail_idx]
             avail2d = [pieces2d[idx] for idx in avail_idx]
             best = None
+            cash = state.me.budget - state.me.profit_own
             for i in range(len(avail)):
                 if avail[i].price > state.me.budget:
                     continue
                 own_pos = None
                 shared_pos = None
+                own_value = avail[i].value
+                # Be pessimistic
+                own_value *= (1 - world.quality_min * world.bad_penalty)
+                own_value = int(own_value)
+                loss = max(0, avail[i].price - cash)
                 for z in range(world.size_own):
                     for y in range(world.size_own):
                         if own_pos:
@@ -412,13 +428,14 @@ async def play_game(shelf, client):
                         break
 
                 if own_pos or shared_pos:
-                    value = 0
+                    value = -loss
                     if own_pos:
-                        value += avail[i].value
+                        value += own_value
                     if shared_pos:
-                        value += 1     # TODO: balance?
-                    if best is None or value > best.value:
-                        best = Placement(i, own_pos=own_pos, shared_pos=shared_pos, value=value)
+                        value += 0.01     # TODO: balance?
+                    if value > 0:
+                        if best is None or value > best.value:
+                            best = Placement(i, own_pos=own_pos, shared_pos=shared_pos, value=value)
             if best is not None:
                 await client.buy_piece(best.idx + 1)
                 if best.own_pos:
