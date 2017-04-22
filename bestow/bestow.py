@@ -5,6 +5,7 @@ import asyncio
 import logging
 import shelve
 import math
+from collections import namedtuple
 from enum import Enum
 import numpy as np
 import numba
@@ -54,7 +55,6 @@ PLAYER_FIELDS = [
 ]
 
 PLAYER_GAUGES = [Gauge('bestow_player_' + name[0], 'Player value of ' + name[0], labelnames=['player']) for name in PLAYER_FIELDS]
-
 NUM_PIECES_GAUGE = Gauge('bestow_num_pieces', 'Number of pieces in game')
 
 
@@ -155,6 +155,9 @@ class Piece2D(object):
         self.pos = np.array(pos, dtype=np.int8).transpose()
 
 
+Placement = namedtuple('Placement', ['idx', 'own_pos', 'shared_pos', 'value'])
+
+
 class Client(dl24.client.ClientBase):
     def __init__(self, *args, **kwargs):
         super(Client, self).__init__(*args, **kwargs)
@@ -195,6 +198,16 @@ class Client(dl24.client.ClientBase):
     async def set_multiplier(self, color, mulitplier):
         pass
 
+    @command('GET_MY_SPACE')
+    async def get_my_space(self):
+        N = int(await self.readline())
+        arr = np.zeros((N, N, N), dtype=np.int8)
+        for z in range(N):
+            for y in range(N):
+                line = await self.readline()
+                arr[z, y, :] = [int(x) for x in line.split()]
+        return arr
+
     @command('GET_SHARED_SPACE')
     async def get_shared_space(self):
         N = int(await self.readline())
@@ -206,6 +219,10 @@ class Client(dl24.client.ClientBase):
 
     @command('PLACE_SHARED_PIECE')
     async def place_shared_piece(self, x, y, rx, ry, rz):
+        pass
+
+    @command('PLACE_OWN_PIECE')
+    async def place_own_piece(self, x, y, z, rx, ry, rz):
         pass
 
 
@@ -223,11 +240,26 @@ def fits2d(space, pos, x, y):
     return True
 
 
+@numba.jit(nopython=True)
+def fits3d(space, pos, x, y, z):
+    N = space.shape[0]
+    for i in range(pos.shape[1]):
+        px = pos[0, i] + x
+        py = pos[1, i] + y
+        pz = pos[2, i] + z
+        if px < 0 or px >= N or py < 0 or py >= N or pz < 0 or pz >= N:
+            return False
+        c = space[pz, py, px]
+        if c != 0:
+            return False
+    return True
+
+
 def place2d(space, piece, x, y):
     offset = np.array([[x], [y]], dtype=np.int8)
     pos = piece.pos + offset
     for i in range(pos.shape[1]):
-        space[pos[1, i], pos[0, 1]] = piece.color[i]
+        space[pos[1, i], pos[0, i]] = piece.color[i]
 
 
 def color_scores(space, world):
@@ -255,6 +287,7 @@ def color_scores(space, world):
                             st.append((x2, y2))
                 scores[color] += math.pow(float(size), world.shared_exponent)
     return scores
+
 
 
 async def play_game(shelf, client):
@@ -286,19 +319,46 @@ async def play_game(shelf, client):
         used_piece = False
         if state.my_turn:
             shared = await client.get_shared_space()
+            own = await client.get_my_space()
             avail_idx = await client.get_pieces_in_range()
             avail = [pieces[idx] for idx in avail_idx]
             avail2d = [pieces2d[idx] for idx in avail_idx]
             best = None
             for i in range(len(avail)):
+                if avail[i].price > state.me.budget:
+                    continue
+                own_pos = None
+                shared_pos = None
+                for z in range(world.size_own):
+                    for y in range(world.size_own):
+                        if own_pos:
+                            break
+                        for x in range(world.size_own):
+                            if fits3d(own, avail[i].pos, x, y, z):
+                                own_pos = (x, y, z)
+                                break
                 for y in range(world.size_shared):
                     for x in range(world.size_shared):
-                        if fits2d(shared, avail2d[i].pos, x, y) and avail[i].price <= state.me.budget:
-                            best = i, x, y
+                        if fits2d(shared, avail2d[i].pos, x, y):
+                            shared_pos = (x, y)
+                            break
+                    if shared_pos:
+                        break
+
+                if own_pos or shared_pos:
+                    value = 0
+                    if own_pos:
+                        value += avail[i].value
+                    if shared_pos:
+                        value += 1     # TODO: balance?
+                    if best is None or value > best.value:
+                        best = Placement(i, own_pos=own_pos, shared_pos=shared_pos, value=value)
             if best is not None:
-                i, x, y = best
-                await client.buy_piece(i + 1)
-                await client.place_shared_piece(x, y, 0, 0, 0)
+                await client.buy_piece(best.idx + 1)
+                if best.own_pos:
+                    await client.place_own_piece(*best.own_pos, 0, 0, 0)
+                if best.shared_pos:
+                    await client.place_shared_piece(*best.shared_pos, 0, 0, 0)
                 place2d(shared, avail2d[i], x, y)
                 used_piece = True
             if used_piece:
