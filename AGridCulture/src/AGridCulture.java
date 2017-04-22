@@ -925,14 +925,20 @@ public class AGridCulture
                 else if (client.getCommandsUsed() < L - 1) {
                     worker.allocatedToMove = true;
                     claimedForMove[target.x][target.y] = true;
-                    System.err.println("Moving worker " + worker.id + " from " + worker.x + ";" + worker.y + " to " + target.x + ";" + target.y + " for value " + val + " with " + worker.dirX[target.x][target.y] + " and " + worker.dirY[target.x][target.y]);
-                    client.writeCommand("MOVE", worker.id, worker.dirX[target.x][target.y], worker.dirY[target.x][target.y]);
-                    worker.nextX = worker.x + worker.dirX[target.x][target.y];
-                    worker.nextY = worker.y + worker.dirY[target.x][target.y];
-                    if (worker.nextX < 0) worker.nextX += A;
-                    if (worker.nextX >= A) worker.nextX -= A;
-                    if (worker.nextY < 0) worker.nextY += A;
-                    if (worker.nextY >= A) worker.nextY -= A;
+                    if (worker.x != target.x || worker.y != target.y) {
+                        System.err.println("Moving worker " + worker.id + " from " + worker.x + ";" + worker.y + " to " + target.x + ";" + target.y + " for value " + val + " with " + worker.dirX[target.x][target.y] + " and " + worker.dirY[target.x][target.y]);
+                        client.writeCommand("MOVE", worker.id, worker.dirX[target.x][target.y], worker.dirY[target.x][target.y]);
+                        worker.nextX = worker.x + worker.dirX[target.x][target.y];
+                        worker.nextY = worker.y + worker.dirY[target.x][target.y];
+                        if (worker.nextX < 0) worker.nextX += A;
+                        if (worker.nextX >= A) worker.nextX -= A;
+                        if (worker.nextY < 0) worker.nextY += A;
+                        if (worker.nextY >= A) worker.nextY -= A;
+                    }
+                    else {
+                        worker.nextX = worker.x;
+                        worker.nextY = worker.y;
+                    }
                 }
             }
         }
