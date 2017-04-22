@@ -59,6 +59,7 @@ NUM_PIECES_GAUGE = Gauge('bestow_num_pieces', 'Number of pieces in game')
 BIGGEST_CUBE_GAUGE = Gauge('bestow_biggest_cube', 'Biggest cube in space', labelnames=['player'])
 BIGGEST_POTENTIAL_CUBE_GAUGE = Gauge('bestow_biggest_potential_cube', 'Biggest cube if all single cubes added', labelnames=['player'])
 OPERATION_TIME = Histogram('bestow_operation_time', 'Function call timings', labelnames=['function'])
+_do_assertions = False
 
 
 def parse(descr, value):
@@ -329,9 +330,9 @@ def fits3d(space, prefix, piece, out=None):
         for dy in (piece.lower[1], piece.upper[1] + 1):
             for dx in (piece.lower[0], piece.upper[0] + 1):
                 sign = -1
-                if dz: sign *= -1
-                if dy: sign *= -1
-                if dx: sign *= -1
+                if dz > piece.lower[2]: sign *= -1
+                if dy > piece.lower[1]: sign *= -1
+                if dx > piece.lower[0]: sign *= -1
                 out[zl:zh, yl:yh, xl:xh] += prefix[zl+dz:zh+dz, yl+dy:yh+dy, xl+dx:xh+dx] * sign
 
     out[collide] = -1
@@ -413,6 +414,10 @@ def color_scores(space, world):
     return scores
 
 
+def assert_equal(expected, actual, name):
+    if _do_assertions:
+        assert expected == actual, "prediction error on {} ({} != {})".format(name, expected, actual)
+
 
 async def play_game(shelf, client):
     logging.info('Starting game')
@@ -447,8 +452,8 @@ async def play_game(shelf, client):
             return
         old_effort = state.total_effort
         # Validations
-        #assert state.me.effort == old_state.me.effort
-        #assert state.me.profit_own == old_state.me.profit_own, "
+        assert_equal(state.me.effort, old_state.me.effort, 'effort')
+        assert_equal(state.me.profit_own, old_state.me.profit_own, 'profit_own')
 
         used_piece = False
         logging.info('Got state')
@@ -479,7 +484,6 @@ async def play_game(shelf, client):
                 shared_pos = None
                 own_value = avail[i].value
                 loss = max(0, avail[i].price - cash)
-                best_hits = -1
                 fitness = fits3d(own, prefix, avail[i])
                 hits = np.max(fitness)
                 if hits >= 0:
@@ -487,7 +491,6 @@ async def play_game(shelf, client):
                     own_pos = [own_pos_flat % world.size_own,
                                own_pos_flat // world.size_own % world.size_own,
                                own_pos_flat // world.size_own**2]
-                    best_hits = hits
 
                 collide = fits2d(shared, avail2d[i])
                 good_y, good_x = collide.nonzero()
@@ -496,7 +499,16 @@ async def play_game(shelf, client):
 
                 if own_pos:
                     value = -loss
-                    q = best_hits - world.quality_min
+                    ### Testing
+                    if _do_assertions:
+                        start = avail[i].lower + own_pos
+                        stop = avail[i].upper + own_pos + 1
+                        test_hits = np.sum(own[start[2]:stop[2], start[1]:stop[1], start[0]:stop[0]])
+                        test_hits2 = rectoid_sum(prefix, start, stop)
+                        assert_equal(test_hits, test_hits2, 'test_hits')
+                        assert_equal(test_hits, hits, 'hits')
+                    ### End testing
+                    q = hits - world.quality_min
                     scaling = world.good_bonus if q > 0 else world.bad_penalty
                     own_value = int(own_value * (1 + scaling * q))
                     value += own_value
@@ -557,10 +569,14 @@ async def play_game(shelf, client):
 
 
 async def main():
+    global _do_assertions
     parser = argparse.ArgumentParser()
     dl24.client.add_arguments(parser)
     parser.add_argument('persist', help='File for persisting state')
+    parser.add_argument('--assert', dest="assert_", action='store_true', help='Do sanity checks')
     args = parser.parse_args()
+    if args.assert_:
+        _do_assertions = True
 
     shelf = shelve.open(args.persist)
     try:
