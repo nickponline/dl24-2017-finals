@@ -8,7 +8,7 @@ public class Test
     {
         Client client = null;
         try {
-            client = new Client("foo", "bar", "localhost", 12345, 8081);
+            client = new Client("baz", "foo", "bar", "localhost", 12345, 8081);
             client.writeCommand("TEST", 1, 3.4, "hello", 'c');
             while (true) {
                 String line = client.readLine();

@@ -1,8 +1,11 @@
 import java.io.IOException;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.PriorityQueue;
+import java.util.Queue;
+import java.util.Random;
 import java.util.Scanner;
 
 import dl24.Client;
@@ -14,10 +17,12 @@ public class AGridCulture
         20003, 20004, 20005
     };
     private static final int[] PROMETHEUS_PORTS = new int[] {
-            6021, 6022, 6023
-        };
+        6021, 6022, 6023
+    };
 
     private final Client client;
+
+    private Random random = new Random();
 
     private int A, E, F, G, I, L;
     private double D, Z, W, T, Sw, Sh, Ss, N, M, K;
@@ -25,22 +30,87 @@ public class AGridCulture
     private char C;
     private int lastU = -1;
 
+    final int[] qx = new int[250000];
+    final int[] qy = new int[250000];
+    
     private class Worker
     {
         int x, y, id;
         char[] storage;
         int numStored = 0;
         boolean allocatedToMove;
+        int[][] distance;
+        int[][] dirX, dirY;
+        int nextX, nextY;
         Worker(int id, int x, int y)
         {
             this.id = id;
             this.x = x;
             this.y = y;
             storage = new char[G];
+            distance = new int[A][A];
+            dirX = new int[A][A];
+            dirY = new int[A][A];
         }
         void addToStorage(char color)
         {
             storage[numStored++] = color;
+        }
+        
+        void recomputeDistances()
+        {
+            for (int i = 0; i < A; i++) {
+                Arrays.fill(distance[i], -1);
+                Arrays.fill(dirX[i],  0);
+                Arrays.fill(dirY[i],  0);
+            }
+            distance[x][y] = 0;
+            dirX[x][y] = 0;
+            dirY[x][y] = 0;
+            qx[0] = x;
+            qy[0] = y;
+            int qh = 1;
+            int qt = 0;
+            while (qt < qh) {
+                int curx = qx[qt];
+                int cury = qy[qt];
+                qt++;
+                for (int c = 0; c < 4; c++) {
+                    int nx = curx + CX[c];
+                    int ny = cury + CY[c];
+                    if (nx < 0) nx += A;
+                    if (nx >= A) nx -= A;
+                    if (ny < 0) ny += A;
+                    if (ny >= A) ny -= A;
+                    if (map[nx][ny] == '#' && !B) {
+                        // No hills allowed.
+                        continue;
+                    }
+                    if (distance[nx][ny] == -1) {
+                        distance[nx][ny] = distance[curx][cury] + 1;
+                        if (curx == x && cury == y) {
+                            dirX[nx][ny] = CX[c];
+                            dirY[nx][ny] = CY[c];
+                        }
+                        else {
+                            dirX[nx][ny] = dirX[curx][cury];
+                            dirY[nx][ny] = dirY[curx][cury];
+                        }
+                        qx[qh] = nx;
+                        qy[qh] = ny;
+                        qh++;
+                    }
+                }
+            }
+            
+            // Sanity check
+            for (int i = 0; i < A; i++) {
+                for (int j = 0; j < A; j++) {
+                    if (dirX[i][j] == 0 && dirY[i][j] == 0) {
+                        assert(distance[i][j] == -1 || (i == x && j == y));
+                    }
+                }
+            }
         }
     }
     
@@ -63,15 +133,230 @@ public class AGridCulture
     private int[][] markerExpiry;
     private int[][] nWorkers;
     private boolean[][] claimedForMove;
+    private boolean[][] harvestCell;
+    private boolean[][] harvestPost;
     
     private List<Worker> workers = new ArrayList<>();
     private List<EnemyWorker> enemyWorkers = new ArrayList<>();
     
     public AGridCulture(Client client)
+        throws Exception
     {
-        this.client = client;        
+        this.client = client;
+        
+        // Run some basic tests on harvesting.
+        initMap(new String[] {
+            ".........",
+            "...AAA...",
+            ".AAA.AAA.",
+            "...AAA...",
+            ".........",
+            ".........",
+            ".........",
+            ".........",
+        }, false);
+        assertHarvestMatch(
+            3, 1,
+            new int[][] {
+                {3, 1}, {4, 1}, {5, 1}, {3, 2}, {5, 2}, {3, 3}, {4, 3}, {5, 3}
+            },
+            new int[][] {
+                
+            }
+        );
+        
+        initMap(new String[] {
+            "................",
+            ".BBBBBBBBBBBBB..",
+            ".B.AAAAAAA...B..",
+            ".B.ABBBB.AA..B..",
+            ".B.AB..B.AA..B..",
+            ".B.ABBBB.AA..B..",
+            ".B.AAAAAAA...B..",
+            ".B...........B..",
+            ".BBBBBBBBBBBBB..",
+            "................",
+            "................",
+            "................",
+            "................",
+            "................",
+            "................",
+            "................",
+        }, false);
+        
+        assertHarvestMatch(
+            1, 1,
+            new int[][] {
+                {1, 1}, {2, 1}, {3, 1}, {4, 1}, {5, 1}, {6, 1}, {7, 1}, {8, 1}, {9, 1}, {10, 1}, {11, 1}, {12, 1}, {13, 1},
+                {1, 2}, {13, 2},
+                {1, 3}, {13, 3},
+                {1, 4}, {13, 4},
+                {1, 5}, {13, 5},
+                {1, 6}, {13, 6},
+                {1, 7}, {13, 7},
+                {1, 8}, {2, 8}, {3, 8}, {4, 8}, {5, 8}, {6, 8}, {7, 8}, {8, 8}, {9, 8}, {10, 8}, {11, 8}, {12, 8}, {13, 8},
+            },
+            new int[][] {}
+        );
+        assertHarvestMatch(
+            4, 2,
+            new int[][] {
+                {3, 2}, {4, 2}, {5, 2}, {6, 2}, {7, 2}, {8, 2}, {9, 2},
+                {3, 3}, {9, 3}, {10, 3},
+                {3, 4}, {9, 4}, {10, 4},
+                {3, 5}, {9, 5}, {10, 5},
+                {3, 6}, {4, 6}, {5, 6}, {6, 6}, {7, 6}, {8, 6}, {9, 6},
+            },
+            new int[][] {}
+        );
+        assertHarvestMatch(
+            6, 5,
+            new int[][] {
+                {4, 3}, {5, 3}, {6, 3}, {7, 3},
+                {4, 4}, {7, 4},
+                {4, 5}, {5, 5}, {6, 5}, {7, 5}
+            },
+            new int[][] {}
+        );
+        
+        H = true;
+        assertHarvestMatch(
+            1, 1,
+            new int[][] {
+                {1, 1}, {2, 1}, {3, 1}, {4, 1}, {5, 1}, {6, 1}, {7, 1}, {8, 1}, {9, 1}, {10, 1}, {11, 1}, {12, 1}, {13, 1},
+                {1, 2}, {13, 2},
+                {1, 3}, {13, 3},
+                {1, 4}, {13, 4},
+                {1, 5}, {13, 5},
+                {1, 6}, {13, 6},
+                {1, 7}, {13, 7},
+                {1, 8}, {2, 8}, {3, 8}, {4, 8}, {5, 8}, {6, 8}, {7, 8}, {8, 8}, {9, 8}, {10, 8}, {11, 8}, {12, 8}, {13, 8},
+            },
+            new int[][] {
+                {3, 2}, {4, 2}, {5, 2}, {6, 2}, {7, 2}, {8, 2}, {9, 2},
+                {3, 3}, {9, 3}, {10, 3},
+                {3, 4}, {9, 4}, {10, 4},
+                {3, 5}, {9, 5}, {10, 5},
+                {3, 6}, {4, 6}, {5, 6}, {6, 6}, {7, 6}, {8, 6}, {9, 6},
+                {4, 3}, {5, 3}, {6, 3}, {7, 3},
+                {4, 4}, {7, 4},
+                {4, 5}, {5, 5}, {6, 5}, {7, 5}
+            }
+        );
+        assertHarvestMatch(
+            4, 2,
+            new int[][] {
+                {3, 2}, {4, 2}, {5, 2}, {6, 2}, {7, 2}, {8, 2}, {9, 2},
+                {3, 3}, {9, 3}, {10, 3},
+                {3, 4}, {9, 4}, {10, 4},
+                {3, 5}, {9, 5}, {10, 5},
+                {3, 6}, {4, 6}, {5, 6}, {6, 6}, {7, 6}, {8, 6}, {9, 6},
+            },
+            new int[][] {
+                {4, 3}, {5, 3}, {6, 3}, {7, 3},
+                {4, 4}, {7, 4},
+                {4, 5}, {5, 5}, {6, 5}, {7, 5}                    
+            }
+        );
+        assertHarvestMatch(
+            6, 5,
+            new int[][] {
+                {4, 3}, {5, 3}, {6, 3}, {7, 3},
+                {4, 4}, {7, 4},
+                {4, 5}, {5, 5}, {6, 5}, {7, 5}
+            },
+            new int[][] {}
+        );
+        
+        initMap(new String[] {
+            "............",
+            ".AAAAAAAAAA.",
+            ".A..A..A..A.",
+            ".AAAA..AAAA.",
+            "............",
+            "............",
+            "............",
+            "............",
+            "............",
+            "............",
+            "............",
+            "............",
+        }, false);
+        assertHarvestMatch(
+            1, 1,
+            new int[][] {
+                {1, 1}, {2, 1}, {3, 1}, {4, 1}, {7, 1}, {8, 1}, {9, 1}, {10, 1},
+                {1, 2}, {4, 2}, {7, 2}, {10, 2},
+                {1, 3}, {2, 3}, {3, 3}, {4, 3}, {7, 3}, {8, 3}, {9, 3}, {10, 3},                
+            },
+            new int[][] {}
+        );
     }
-    
+
+    private void initMap(String[] s, boolean killInternal)
+    {
+        A = s.length;
+        map = new char[A][A];
+        harvestPost = new boolean[A][A];
+        harvestCell = new boolean[A][A];
+        for (int i = 0; i < A; i++) {
+            for (int j = 0; j < A; j++) {
+                map[j][i] = s[i].charAt(j);
+            }
+        }
+        
+        H = killInternal;
+    }
+
+    private void assertHarvestMatch(int x, int y, int[][] perimeter, int[][] internal)
+        throws Exception
+    {
+        Harvest harvest = getHarvest(x, y);
+        assert(perimeter.length == harvest.perimeterX.length);
+        for (int i = 0; i < perimeter.length; i++) {
+            boolean found = false;
+            for (int j = 0; j < harvest.perimeterX.length; j++) {
+                if (perimeter[i][0] == harvest.perimeterX[j] && perimeter[i][1] == harvest.perimeterY[j]) {
+                    found = true;
+                    break;
+                }
+            }
+            assert(found);
+        }
+        for (int j = 0; j < harvest.perimeterX.length; j++) {
+            boolean found = false;
+            for (int i = 0; i < perimeter.length; i++) {
+                if (perimeter[i][0] == harvest.perimeterX[j] && perimeter[i][1] == harvest.perimeterY[j]) {
+                    found = true;
+                    break;
+                }
+            }
+            assert(found);
+        }
+
+        assert(internal.length == harvest.internalX.length);
+        for (int i = 0; i < internal.length; i++) {
+            boolean found = false;
+            for (int j = 0; j < harvest.internalX.length; j++) {
+                if (internal[i][0] == harvest.internalX[j] && internal[i][1] == harvest.internalY[j]) {
+                    found = true;
+                    break;
+                }
+            }
+            assert(found);
+        }
+        for (int j = 0; j < harvest.internalX.length; j++) {
+            boolean found = false;
+            for (int i = 0; i < internal.length; i++) {
+                if (internal[i][0] == harvest.internalX[j] && internal[i][1] == harvest.internalY[j]) {
+                    found = true;
+                    break;
+                }
+            }
+            assert(found);
+        }
+    }
+
     public void run()
         throws Exception
     {
@@ -125,6 +410,8 @@ public class AGridCulture
                 markerExpiry = new int[A][A];
                 nWorkers = new int[A][A];
                 claimedForMove = new boolean[A][A];
+                harvestCell = new boolean[A][A];
+                harvestPost = new boolean[A][A];
                 client.readLine(); // map size
                 for (int i = 0; i < A; i++) {
                     String line = client.readLine();
@@ -158,6 +445,7 @@ public class AGridCulture
                         for (int j = 0; j < numStored; j++) {
                             worker.addToStorage(sc.next().charAt(0));
                         }
+                        worker.recomputeDistances();
                         workers.add(worker);
                     }
                 }
@@ -219,16 +507,19 @@ public class AGridCulture
                     // Move our workers.
                     moveWorkers();
 
-                    // Update marker expiries.
-                    for (int i = 0; i < A; i++) {
-                        for (int j = 0; j < A; j++) {
-                            if (markerExpiry[j][i] >= 0) {
-                                markerExpiry[j][i] = -1;
-                                map[j][i] = '.';
-                            }
+                    // See if our workers should drop or destroy any markers.
+                    dropDestroyMarkers();
+
+                    // Update the distance cache for workers that have moved.
+                    for (int i = 0; i < workers.size(); i++) {
+                        Worker worker = workers.get(i);
+                        if (worker.allocatedToMove) {
+                            worker.x = worker.nextX;
+                            worker.y = worker.nextY;
+                            worker.recomputeDistances();
                         }
                     }
-                    
+
                     // Wait until the end of the turn.
                     client.doWait();
                     
@@ -252,20 +543,199 @@ public class AGridCulture
                         markerExpiry[x][y] = F;
                     }
                     sc = new Scanner(client.readLine());
-                    // Ignore score data for now
+                    int Sc = sc.nextInt();
+                    Harvest[] harvests = new Harvest[Sc];
+                    for (int i = 0; i < Sc; i++) {
+                        int x = sc.nextInt();
+                        int y = sc.nextInt();
+                        harvests[i] = getHarvest(x, y);
+                    }
+                    
+                    for (int i = 0; i < Sc; i++) {
+                        Harvest harvest = harvests[i];
+                        for (int j = 0; j < harvest.perimeterX.length; j++) {
+                            int hx = harvest.perimeterX[j];
+                            int hy = harvest.perimeterY[j];
+                            map[hx][hy] = '.';
+                            markerExpiry[hx][hy] = -1;
+                        }
+                        if (H) {
+                            for (int j = 0; j < harvest.internalX.length; j++) {
+                                int hx = harvest.internalX[j];
+                                int hy = harvest.internalY[j];
+                                map[hx][hy] = '.';
+                                markerExpiry[hx][hy] = -1;
+                            }
+                        }
+                    }
+                    
+                    // Get last score from the round.
+                    client.writeCommand("LAST_SCORE");
+                    sc = new Scanner(client.readLine());
+                    int Slast = sc.nextInt();
+                    for (int i = 0; i < Slast; i++) {
+                        char color = sc.next().charAt(0);
+                        double S = sc.nextDouble();
+                        if (color == C) {
+                            client.logPrometheusSummary("SCORE", S);
+                            System.err.println("Got score " + S + " in last round");
+                        }
+                    }
+
+                    // Update marker expiries.
+                    for (int i = 0; i < A; i++) {
+                        for (int j = 0; j < A; j++) {
+                            if (markerExpiry[j][i] >= 0) {
+                                markerExpiry[j][i] -= 1;
+                                if (markerExpiry[j][i] < 0) {
+                                    map[j][i] = '.';
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
         catch (Exception e) {
-            client.stop();
             throw e;
         }
     }
     
+    static class Harvest
+    {
+        int[] perimeterX, perimeterY;
+        int[] internalX, internalY;
+        
+        Harvest(int numPerimeter, int numInternal)
+        {
+            perimeterX = new int[numPerimeter];
+            perimeterY = new int[numPerimeter];
+            internalX = new int[numInternal];
+            internalY = new int[numInternal];
+        }
+    }
+
+    static int[] CX = {-1, 1, 0, 0}, CY = {0, 0, -1, 1};
+    static int[] CHX1 = {0, 1, 0, 0}, CHY1 = {0, 0, 0, 1};
+    static int[] CHX2 = {0, 1, 1, 1}, CHY2 = {1, 1, 0, 1};
+
+    private Harvest getHarvest(int x, int y)
+        throws Exception
+    {
+        // Need to return:
+        //
+        // 1) the perimeter, which will include POSTs to be removed from the map
+        // 2) any internal POSTs which should be removed from the map.
+        if (map[x][y] == '.') {
+            throw new Exception("Failed harvest at blank cell " + x + " " + y);
+        }
+        
+        // Figure out which posts are included.
+        for (int i = 0; i < A; i++) {
+            Arrays.fill(harvestPost[i], false);
+            Arrays.fill(harvestCell[i], false);
+        }
+        harvestPost[x][y] = true;
+        Queue<Integer> q = new ArrayDeque<>();
+        q.add(y * A + x);
+        while (!q.isEmpty()) {
+            int curY = q.peek() / A;
+            int curX = q.poll() - curY * A;
+            for (int c = 0; c < 4; c++) {
+                int nx = curX + CX[c];
+                int ny = curY + CY[c];
+                if (nx < 0) nx += A;
+                if (nx >= A) nx -= A;
+                if (ny < 0) ny += A;
+                if (ny >= A) ny -= A;
+                if (map[nx][ny] == map[x][y] && !harvestPost[nx][ny]) {
+                    harvestPost[nx][ny] = true;
+                    q.add(nx + ny * A);
+                }
+            }
+        }
+        
+        // Now flood-fill to figure out which cells are in and out.
+        harvestCell[0][0] = true;
+        q.add(0);
+        int count = 1;
+        while (!q.isEmpty()) {
+            int curY = q.peek() / A;
+            int curX = q.poll() - curY * A;
+            for (int c = 0; c < 4; c++) {
+                int nx = curX + CX[c];
+                int ny = curY + CY[c];
+                int chk1x = curX + CHX1[c];
+                int chk2x = curX + CHX2[c];
+                int chk1y = curY + CHY1[c];
+                int chk2y = curY + CHY2[c];
+
+                // We can only cross to the next cell if this does not cross a fence.
+                if (harvestPost[chk1x][chk1y] && harvestPost[chk2x][chk2y]) {
+                    continue;
+                }
+                
+                if (nx < 0) nx += A - 1;
+                if (nx >= A - 1) nx -= A - 1;
+                if (ny < 0) ny += A - 1;
+                if (ny >= A - 1) ny -= A - 1;
+                if (!harvestCell[nx][ny]) {
+                    harvestCell[nx][ny] = true;
+                    q.add(nx + ny * A);
+                    count++;
+                }
+            }
+        }
+        
+        // Figure out whether it was the true or false cells that got filled.
+        boolean value = count < (A * A) / 2;
+        int numPerimeter = 0, numInternal = 0;
+        for (int i = 0; i < A - 1; i++) {
+            for (int j = 0; j < A - 1; j++) {
+                if (harvestCell[i][j] == value) {
+                    for (int c = 0; c < 4; c++) {
+                        int nx = i + cx[c];
+                        int ny = j + cy[c];
+                        if (harvestPost[nx][ny]) {
+                            numPerimeter++;
+                        }
+                        else if (map[nx][ny] != '.' && map[nx][ny] != '#') {
+                            numInternal++;
+                        }
+                    }
+                }
+            }
+        }
+        Harvest harvest = new Harvest(numPerimeter, numInternal);
+        numPerimeter = 0; numInternal = 0;
+        for (int i = 0; i < A - 1; i++) {
+            for (int j = 0; j < A - 1; j++) {
+                if (harvestCell[i][j] == value) {
+                    for (int c = 0; c < 4; c++) {
+                        int nx = i + cx[c];
+                        int ny = j + cy[c];
+                        if (harvestPost[nx][ny]) {
+                            harvest.perimeterX[numPerimeter] = nx;
+                            harvest.perimeterY[numPerimeter] = ny;
+                            numPerimeter++;
+                        }
+                        else if (map[nx][ny] != '.' && map[nx][ny] != '#') {
+                            harvest.internalX[numInternal] = nx;
+                            harvest.internalY[numInternal] = ny;
+                            numInternal++;
+                        }
+                    }
+                }
+            }
+        }
+        return harvest;
+    }
+
     private void scoreAreas()
         throws Exception
     {
         // Identify any areas that are ready to be scored.
+        System.err.println("Checking for scores with " + C);
         for (int i = 1; i < A; i++) {
             for (int j = 1; j < A; j++) {
                 if (map[i][j] == C && map[i - 1][j] == C && map[i][j - 1] == C && map[i - 1][j - 1] == C && client.getCommandsUsed() < L - 1) {
@@ -275,6 +745,15 @@ public class AGridCulture
                 }
             }
         }
+        /*PrintWriter out = new PrintWriter(new BufferedWriter(new FileWriter("/tmp/map.out", true)));
+        out.println("Checking for scores with " + C);
+        for (int i = 0; i < A; i++) {
+            for (int j = 0; j < A; j++) {
+                out.print(map[j][i]);
+            }
+            out.println();
+        }
+        out.close();*/
     }
 
     private void placeMarkers()
@@ -292,12 +771,20 @@ public class AGridCulture
             for (int j = 0; j < 2; j++) {
                 for (int k = 0; k < 2; k++) {
                     int nx = worker.x + cx[j];
-                    int ny = worker.y + cy[j];
-                    if (nx > 0 && nx < A && ny > 0 && ny < A &&
+                    int ny = worker.y + cy[k];
+                    if (nx < 0) nx += A;
+                    if (nx >= A) nx -= A;
+                    if (ny < 0) ny += A;
+                    if (ny >= A) ny -= A;
+                    int mx = nx - 1;
+                    int my = ny - 1;
+                    if (mx < 0) mx += A;
+                    if (my < 0) my += A;
+                    if (
                         (map[nx][ny] == '.' || map[nx][ny] == C) &&
-                        (map[nx - 1][ny] == '.' || map[nx - 1][ny] == C) &&
-                        (map[nx][ny - 1] == '.' || map[nx][ny - 1] == C) &&
-                        (map[nx - 1][ny - 1] == '.' || map[nx - 1][ny - 1] == C))
+                        (map[mx][ny] == '.' || map[mx][ny] == C) &&
+                        (map[nx][my] == '.' || map[nx][my] == C) &&
+                        (map[mx][my] == '.' || map[my][my] == C))
                     {
                         ok = true;
                         break;
@@ -322,9 +809,23 @@ public class AGridCulture
     }
 
     static class TargetCell
+        implements Comparable<TargetCell>
     {
         int x, y, value, workerIndex;
+        TargetCell(int x, int y, int value, int workerIndex)
+        {
+            this.x = x;
+            this.y = y;
+            this.value = value;
+            this.workerIndex = workerIndex;
+        }
+        
+        public int compareTo(TargetCell that)
+        {
+            return Integer.compare(value, that.value);
+        }
     }
+    
     private void moveWorkers()
         throws Exception
     {
@@ -332,108 +833,161 @@ public class AGridCulture
             workers.get(i).allocatedToMove = false;
         }
         
-        /*for (int val = 3; val >= 0; val++) {
+        for (int val = 3; val >= 0; val--) {
             PriorityQueue<TargetCell> q = new PriorityQueue<>();
-        }*/
-        
-        // For each worker, determine the cell that it should move to which has the best value.
-        for (int i = 0; i < workers.size(); i++) {
-            Worker worker = workers.get(i);
-            int best = -1;
-            int bestX = -1, bestY = -1;
             for (int x = 0; x < A; x++) {
                 for (int y = 0; y < A; y++) {
-                    // Skip marked cells and those with other workers in them.
-                    if (claimedForMove[x][y] || map[x][y] != '.' || (nWorkers[x][y] > 0 && (x != worker.x || y != worker.y)) || nWorkers[x][y] > 1) {
+                    // Skip marked cells and those with foreign or multiple workers in them.
+                    if (claimedForMove[x][y] || map[x][y] != '.' || nWorkers[x][y] > 1) {
                         continue;
                     }
-
-                    // If we cannot place a square of markers around here, then skip it.
+                    if (nWorkers[x][y] == 1) {
+                        boolean foreign = true;
+                        for (int i = 0; i < workers.size(); i++) {
+                            if (workers.get(i).x == x && workers.get(i).y == y) {
+                                foreign = false;
+                                break;
+                            }
+                        }
+                        if (foreign) {
+                            continue;
+                        }
+                    }
+                    
+                    // Figure out whether we can place a square of markers here, and if so
+                    // how many cells are already filled.
                     boolean ok = false;
                     int value = 0;
                     for (int j = 0; j < 2; j++) {
                         for (int k = 0; k < 2; k++) {
                             int nx = x + cx[j];
                             int ny = y + cy[k];
-                            if (nx > 0 && nx < A && ny > 0 && ny < A &&
+                            if (nx < 0) nx += A;
+                            if (nx >= A) nx -= A;
+                            if (ny < 0) ny += A;
+                            if (ny >= A) ny -= A;
+                            int mx = nx - 1;
+                            int my = ny - 1;
+                            if (mx < 0) mx += A;
+                            if (my < 0) my += A;
+                            if (
                                 (map[nx][ny] == '.' || map[nx][ny] == C) &&
-                                (map[nx - 1][ny] == '.' || map[nx - 1][ny] == C) &&
-                                (map[nx][ny - 1] == '.' || map[nx][ny - 1] == C) &&
-                                (map[nx - 1][ny - 1] == '.' || map[nx - 1][ny - 1] == C))
+                                (map[mx][ny] == '.' || map[mx][ny] == C) &&
+                                (map[nx][my] == '.' || map[nx][my] == C) &&
+                                (map[mx][my] == '.' || map[my][my] == C))
                             {
                                 ok = true;
                                 int curValue = (map[nx][ny] == C ? 1 : 0) + 
-                                               (map[nx - 1][ny] == C ? 1 : 0) + 
-                                               (map[nx][ny - 1] == C ? 1 : 0) + 
-                                               (map[nx - 1][ny - 1] == C ? 1 : 0);
+                                               (map[mx][ny] == C ? 1 : 0) + 
+                                               (map[nx][my] == C ? 1 : 0) + 
+                                               (map[mx][my] == C ? 1 : 0);
                                 if (curValue > value) {
                                     value = curValue;
                                 }
                             }
                         }
                     }
-                    if (!ok) {
+                    if (!ok || value != val) {
                         continue;
                     }
                     
-                    // The value of A is equal to the number of markers we have in adjacent cells
-                    // squared, minus the distance to get here from the worker's current location.
-                    value = value * value + A + A - 2 - Math.abs(x - worker.x) - Math.abs(y - worker.y);
-                    
-                    if (best == -1 || value > best) {
-                        best = value;
-                        bestX = x;
-                        bestY = y;
+                    // Figure out which worker would be best to assign to this task.
+                    int bestDist = -1;
+                    int bestWorker = -1;
+                    for (int i = 0; i < workers.size(); i++) {
+                        Worker worker = workers.get(i);
+                        if (worker.allocatedToMove) {
+                            continue;
+                        }
+                        int dist = worker.distance[x][y];
+                        if (dist != -1 && (bestDist == -1 || dist < bestDist)) {
+                            bestDist = dist;
+                            bestWorker = i;
+                        }
+                    }
+                    if (bestWorker > -1) {
+                        q.add(new TargetCell(x, y, bestDist, bestWorker));
                     }
                 }
             }
             
-            if (best != -1 && client.getCommandsUsed() < L - 1 && (bestX != worker.x || bestY != worker.y)) {
-                claimedForMove[bestX][bestY] = true;
-                int diffX = bestX - worker.x;
-                int diffY = bestY - worker.y;
-                System.err.println("Moving worker " + worker.id + " from " + worker.x + ";" + worker.y + " to " + bestX + ";" + bestY);
-                for (int iy = -2; iy <= 2; iy++) {
-                    for (int ix = -2; ix <= 2; ix++) {
-                        int nx = bestX + ix;
-                        int ny = bestY + iy;
-                        if (nx < 0 || nx >= A || ny < 0 || ny >= A) {
-                            continue;
-                        }
-                        System.err.print(map[nx][ny]);
-                        if (nx == worker.x && ny == worker.y) {
-                            System.err.print('*');
-                        }
-                        else {
-                            System.err.print(' ');
-                        }
-                    }
-                    System.err.println();
+            // Suck out the best candidates and assign them for moves.
+            while (!q.isEmpty()) {
+                TargetCell target = q.poll();
+                Worker worker = workers.get(target.workerIndex);
+                if (worker.allocatedToMove) {
+                    continue;
                 }
-                if (Math.abs(diffX) > Math.abs(diffY)) {
-                    // Move along X.
-                    int diff = diffX < 0 ? -1 : 1;
-                    client.writeCommand("MOVE", worker.id, diff, 0);
-                    worker.x += diff;
+                else if (client.getCommandsUsed() < L - 1) {
+                    worker.allocatedToMove = true;
+                    claimedForMove[target.x][target.y] = true;
+                    System.err.println("Moving worker " + worker.id + " from " + worker.x + ";" + worker.y + " to " + target.x + ";" + target.y + " for value " + val + " with " + worker.dirX[target.x][target.y] + " and " + worker.dirY[target.x][target.y]);
+                    client.writeCommand("MOVE", worker.id, worker.dirX[target.x][target.y], worker.dirY[target.x][target.y]);
+                    worker.nextX = worker.x + worker.dirX[target.x][target.y];
+                    worker.nextY = worker.y + worker.dirY[target.x][target.y];
+                    if (worker.nextX < 0) worker.nextX += A;
+                    if (worker.nextX >= A) worker.nextX -= A;
+                    if (worker.nextY < 0) worker.nextY += A;
+                    if (worker.nextY >= A) worker.nextY -= A;
                 }
-                else {
-                    // Move along Y.
-                    int diff = diffY < 0 ? -1 : 1;
-                    client.writeCommand("MOVE", worker.id, 0, diff);
-                    worker.y += diff;
-                }
-            }
-            else if (best == -1) {
-                System.err.println("Nothing for worker " + worker.id + " to do?");
             }
         }
     }
     
+    private void dropDestroyMarkers()
+        throws Exception
+    {
+        for (int i = 0; i < workers.size(); i++) {
+            Worker worker = workers.get(i);
+            if (map[worker.x][worker.y] != '.' && map[worker.x][worker.y] != C && worker.numStored < G && nWorkers[worker.x][worker.y] == 1 && canExecuteCommand()) {
+                client.writeCommand("PUT", worker.id, C);
+                worker.addToStorage(map[worker.x][worker.y]);
+                System.err.println("Replaced marker of team " + map[worker.x][worker.y] + " at " + worker.x + " " + worker.y);
+                map[worker.x][worker.y] = C;
+                markerExpiry[worker.x][worker.y] = F;
+            }
+            else if (map[worker.x][worker.y] == '.' && worker.numStored > G - 10 && nWorkers[worker.x][worker.y] == 1 && canExecuteCommand()) {
+                // Dump a random marker.
+                int index = random.nextInt(worker.numStored);
+                client.writeCommand("PUT", worker.id, worker.storage[index]);
+                System.err.println("Dumped marker " + worker.storage[index] + " at " + worker.x + " " + worker.y);
+                worker.numStored--;
+                if (worker.numStored > 0) {
+                    worker.storage[index] = worker.storage[worker.numStored];
+                }
+            }
+        }
+    }
+
+    private boolean canExecuteCommand()
+    {
+        return client.getCommandsUsed() < L - 1;
+    }
+
     public static void main(String[] args)
         throws Exception
     {
-        final Client client = new Client(null, null, "localhost", PORTS[1], PROMETHEUS_PORTS[1]);
-        final AGridCulture culture = new AGridCulture(client);
-        culture.run();
+        int index = Integer.parseInt(args[0]);
+        try {
+            final Client client = new Client("grid" + index, null, null, "localhost", PORTS[index], PROMETHEUS_PORTS[index]);
+            final AGridCulture culture = new AGridCulture(client);
+            while (true) {
+                try {
+                    culture.run();
+                }
+                catch (Exception e) {
+                    if (!e.getMessage().contains("Failed harvest at blank cell")) {
+                        client.stop();
+                        throw new RuntimeException(e);
+                    }
+                    else {
+                        System.err.println("Failed harvest! " + e);
+                    }
+                }
+            }
+        }
+        catch (Exception e) {
+            throw new RuntimeException("Failed to start client " + index, e);
+        }
     }
 }

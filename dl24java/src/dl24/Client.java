@@ -8,6 +8,7 @@ import java.net.Socket;
 import java.util.HashMap;
 import java.util.Map;
 
+import io.prometheus.client.CollectorRegistry;
 import io.prometheus.client.Summary;
 import io.prometheus.client.exporter.MetricsServlet;
 
@@ -21,19 +22,24 @@ public class Client
     private final PrintWriter myWriter;
     private final BufferedReader myReader;
 
-    private final Map<String,Summary> myCommandCollectors;
+    private final Map<String,Summary> mySummaries;
 
     private final Server myPrometheusServer;
-
+    private final CollectorRegistry registry;
+    
     private int commandsUsed = 0;
     
-    public Client(String username,
+    private final String appName;
+    
+    public Client(String appName,
+                  String username,
                   String password,
                   String host,
                   int port,
                   int prometheusPort)
         throws IOException, ProtocolException
     {
+        this.appName = appName;
         mySocket = new Socket(host, port);
         mySocket.setTcpNoDelay(true);
         myWriter = new PrintWriter(mySocket.getOutputStream());
@@ -54,10 +60,11 @@ public class Client
 
         if (prometheusPort > 0) {
             // Start an HTTP server to expose Prometheus metrics.
+            registry = new CollectorRegistry();
             myPrometheusServer = new Server(prometheusPort);
             ServletHandler handler = new ServletHandler();
             myPrometheusServer.setHandler(handler);
-            handler.addServletWithMapping(new ServletHolder(new MetricsServlet()), "/metrics");
+            handler.addServletWithMapping(new ServletHolder(new MetricsServlet(registry)), "/metrics");
             try {
                 myPrometheusServer.start();
             }
@@ -66,11 +73,12 @@ public class Client
             }
             
             // Create a store for our per-command metrics.
-            myCommandCollectors = new HashMap<>();
+            mySummaries = new HashMap<>();
         }
         else {
-            myCommandCollectors = null;
+            mySummaries = null;
             myPrometheusServer = null;
+            registry = null;
         }
     }
     
@@ -106,12 +114,12 @@ public class Client
         throws IOException, ProtocolException
     {
         final Summary.Timer timer;
-        if (myCommandCollectors != null) {
-            final Summary summary = myCommandCollectors.computeIfAbsent(
+        if (mySummaries != null) {
+            final Summary summary = mySummaries.computeIfAbsent(
                 command,
                 c -> Summary.build()
                             .name("command_latency_" + c)
-                            .help(c + " command latency in seconds").register()
+                            .help(c + " command latency in seconds").register(registry)
             );
             timer = summary.startTimer();
         }
@@ -163,9 +171,17 @@ public class Client
         commandsUsed = 0;
     }
     
-    public void logOperationLatency()
+    public void logPrometheusSummary(String name, double value)
     {
-        
+        if (mySummaries != null) {
+            final Summary summary = mySummaries.computeIfAbsent(
+                "user_" + name,
+                c -> Summary.build()
+                            .name("user_" + name)
+                            .help("user var " + name).register(registry)
+            );
+            summary.observe(value);
+        }
     }
     
     public int getCommandsUsed()
