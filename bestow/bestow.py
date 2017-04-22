@@ -251,17 +251,31 @@ class Client(dl24.client.ClientBase):
         pass
 
 
-def fits2d(space, pos, x, y):
+def fix_piece(piece):
+    if not hasattr(piece, 'lower'):
+        piece.lower = np.min(piece.pos, axis=1)
+        piece.upper = np.max(piece.pos, axis=1)
+
+
+def fits2d(space, piece, out=None):
     N = space.shape[0]
+    fix_piece(piece)
+    if out is None:
+        out = np.empty((N, N), dtype=np.bool_)
+    start = np.maximum(0, -piece.lower)
+    stop = np.minimum(N, N - piece.upper)
+    xl, yl = start
+    xh, yh = stop
+    pos = piece.pos
+    space_bool = space.astype(np.bool_)
+    out.fill(True)
+    out[yl:yh, xl:xh].fill(False)
     for i in range(pos.shape[1]):
-        px = pos[0, i] + x
-        py = pos[1, i] + y
-        if px < 0 or px >= N or py < 0 or py >= N:
-            return False
-        c = space[py, px]
-        if c != 0:
-            return False
-    return True
+        x, y = pos[:, i]
+        out[yl:yh, xl:xh] |= space_bool[yl+y:yh+y, xl+x:xh+x]
+    # Convert from conflict to fit
+    out = np.logical_not(out, out=out)
+    return out
 
 
 def prefix_sum(space):
@@ -286,9 +300,7 @@ def rectoid_sum(prefixes, lower, upper):
 
 def fits3d(space, prefix, piece, out=None):
     N = space.shape[0]
-    if not hasattr(piece, 'lower'):
-        piece.lower = np.min(piece.pos, axis=1)
-        piece.upper = np.max(piece.pos, axis=1)
+    fix_piece(piece)
     if out is None:
         out = np.empty((N, N, N), dtype=np.int32)
     out.fill(-1)
@@ -461,13 +473,11 @@ async def play_game(shelf, client):
                                own_pos_flat // world.size_own % world.size_own,
                                own_pos_flat // world.size_own**2]
                     best_hits = hits
-                for y in range(world.size_shared):
-                    for x in range(world.size_shared):
-                        if fits2d(shared, avail2d[i].pos, x, y):
-                            shared_pos = (x, y)
-                            break
-                    if shared_pos:
-                        break
+
+                collide = fits2d(shared, avail2d[i])
+                good_y, good_x = collide.nonzero()
+                if len(good_y):
+                    shared_pos = (good_x[0], good_y[0])
 
                 if own_pos or shared_pos:
                     value = -loss
