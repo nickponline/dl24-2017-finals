@@ -359,7 +359,7 @@ async def play_game(shelf, client):
                     await client.place_own_piece(*best.own_pos, 0, 0, 0)
                 if best.shared_pos:
                     await client.place_shared_piece(*best.shared_pos, 0, 0, 0)
-                place2d(shared, avail2d[i], x, y)
+                    place2d(shared, avail2d[best.idx], *best.shared_pos)
                 used_piece = True
             if used_piece:
                 state.me.effort += avail[i].effort
