@@ -135,6 +135,7 @@ public class AGridCulture
     private boolean[][] claimedForMove;
     private boolean[][] harvestCell;
     private boolean[][] harvestPost;
+    private boolean[][] scored;
     
     private List<Worker> workers = new ArrayList<>();
     private List<EnemyWorker> enemyWorkers = new ArrayList<>();
@@ -412,6 +413,7 @@ public class AGridCulture
                 claimedForMove = new boolean[A][A];
                 harvestCell = new boolean[A][A];
                 harvestPost = new boolean[A][A];
+                scored = new boolean[A][A];
                 client.readLine(); // map size
                 for (int i = 0; i < A; i++) {
                     String line = client.readLine();
@@ -738,14 +740,111 @@ public class AGridCulture
     private void scoreAreas()
         throws Exception
     {
-        // Identify any areas that are ready to be scored.
-        System.err.println("Checking for scores with " + C);
-        for (int i = 1; i < A; i++) {
-            for (int j = 1; j < A; j++) {
-                if (map[i][j] == C && map[i - 1][j] == C && map[i][j - 1] == C && map[i - 1][j - 1] == C && client.getCommandsUsed() < L - 1) {
-                    // Ready!
-                    System.err.println("Harvesting at " + i + " " + j);
-                    client.writeCommand("SCORE", i, j);
+        for (int i = 0; i < A; i++) {
+            Arrays.fill(scored[i], false);
+            Arrays.fill(harvestCell[i], false);
+        }
+
+        // Identify any areas that are ready to be scored. To determine this, we flood-fill and see which areas
+        // form contiguous chunks of space.
+        qx[0] = 0;
+        qy[0] = 0;
+        int qt = 0;
+        int qh = 1;
+        int count = 1;
+        scored[0][0] = true;
+        while (qt < qh) {
+            int curx = qx[qt];
+            int cury = qy[qt];
+            qt++;
+            for (int c = 0; c < 4; c++) {
+                int nx = curx + CX[c];
+                int ny = cury + CY[c];
+                int chk1x = curx + CHX1[c];
+                int chk2x = curx + CHX2[c];
+                int chk1y = cury + CHY1[c];
+                int chk2y = cury + CHY2[c];
+
+                // We can only cross to the next cell if this does not cross a fence.
+                if (map[chk1x][chk1y] == C && map[chk2x][chk2y] == C) {
+                    continue;
+                }
+
+                if (nx < 0) nx += A - 1;
+                if (nx >= A - 1) nx -= A - 1;
+                if (ny < 0) ny += A - 1;
+                if (ny >= A - 1) ny -= A - 1;
+                if (!scored[nx][ny]) {
+                    scored[nx][ny] = true;
+                    qx[qh] = nx;
+                    qy[qh] = ny;
+                    qh++;
+                    count++;
+                }                
+            }
+        }
+        
+        // Find areas to score.
+        boolean value = count < (A * A / 2);
+        for (int x = 0; x < A - 1; x++) {
+            for (int y = 0; y < A - 1; y++) {
+                if (scored[x][y] == value) {
+                    // Flood-fill in here, finding any POST to score from.
+                    int scoreX = -1, scoreY = -1;
+                    int size = 1;
+                    qx[0] = x;
+                    qy[0] = y;
+                    qt = 0;
+                    qh = 1;
+                    harvestCell[x][y] = true;
+                    while (qt < qh) {
+                        int curx = qx[qt];
+                        int cury = qy[qt];
+                        qt++;
+                        for (int c = 0; c < 4; c++) {
+                            int nx = curx + CX[c];
+                            int ny = cury + CY[c];
+                            int chk1x = curx + CHX1[c];
+                            int chk2x = curx + CHX2[c];
+                            int chk1y = cury + CHY1[c];
+                            int chk2y = cury + CHY2[c];
+
+                            if (nx < 0) nx += A - 1;
+                            if (nx >= A - 1) nx -= A - 1;
+                            if (ny < 0) ny += A - 1;
+                            if (ny >= A - 1) ny -= A - 1;
+
+                            // We can only cross to the next cell if this does not cross a fence.
+                            if (map[chk1x][chk1y] == C && map[chk2x][chk2y] == C) {
+                                // If this fence crossing would take us outside the contained area,
+                                // and if we do not yet have a POST to activate the score from, then
+                                // make a note of one of these POSTs now. We must do this check since
+                                // otherwise we might catch a fence that is contained within the BLOB
+                                // that we're filling.
+                                if (scored[nx][ny] != value && scoreX == -1) {
+                                    scoreX = chk1x;
+                                    scoreY = chk1y;
+                                }
+                                continue;
+                            }
+
+                            if (scored[nx][ny] == value && !harvestCell[nx][ny]) {
+                                harvestCell[nx][ny] = true;
+                                qx[qh] = nx;
+                                qy[qh] = ny;
+                                qh++;
+                                size++;
+                            }                
+                        }
+                    }
+                    assert(scoreX != -1);
+                    
+                    // How big a size do we want before we harvest?
+                    if (size >= 9 && canExecuteCommand()) {
+                        // Yum!
+                        System.err.println("Harvesting at " + scoreX + " " + scoreY + " with size of " + size);
+                        client.writeCommand("SCORE", scoreX, scoreY);
+                    }
                 }
             }
         }
