@@ -5,10 +5,10 @@ import asyncio
 import logging
 import shelve
 import math
+import gc
 from collections import namedtuple
 from enum import Enum
 import numpy as np
-import numba
 import dl24.client
 from dl24.client import command, ProtocolError, Failure
 from prometheus_client import Counter, Gauge
@@ -210,31 +210,33 @@ class Client(dl24.client.ClientBase):
     async def set_multiplier(self, color, mulitplier):
         pass
 
-    async def _get_space(self):
+    async def _get_space(self, out):
         N = int(await self.readline())
-        arr = np.zeros((N, N, N), dtype=np.int8)
+        if out is None:
+            out = np.zeros((N, N, N), dtype=np.int8)
         for z in range(N):
             for y in range(N):
                 line = await self.readline()
-                arr[z, y, :] = [int(x) for x in line.split()]
-        return arr
+                out[z, y, :] = [int(x) for x in line.split()]
+        return out
 
     @command('GET_MY_SPACE')
-    async def get_my_space(self):
-        return await self._get_space()
+    async def get_my_space(self, *, out=None):
+        return await self._get_space(out)
 
     @command('GET_OPPONENT_SPACE')
-    async def get_opponent_space(self):
-        return await self._get_space()
+    async def get_opponent_space(self, *, out=None):
+        return await self._get_space(out)
 
     @command('GET_SHARED_SPACE')
-    async def get_shared_space(self):
+    async def get_shared_space(self, *, out=None):
         N = int(await self.readline())
-        arr = np.zeros((N, N), dtype=np.int8)
+        if out is None:
+            out = np.zeros((N, N), dtype=np.int8)
         for i in range(N):
             line = await self.readline()
-            arr[i, :] = [int(x) for x in line.split()]
-        return arr
+            out[i, :] = [int(x) for x in line.split()]
+        return out
 
     @command('PLACE_SHARED_PIECE')
     async def place_shared_piece(self, x, y, rx, ry, rz):
@@ -249,7 +251,6 @@ class Client(dl24.client.ClientBase):
         pass
 
 
-@numba.jit(nopython=True)
 def fits2d(space, pos, x, y):
     N = space.shape[0]
     for i in range(pos.shape[1]):
@@ -263,22 +264,55 @@ def fits2d(space, pos, x, y):
     return True
 
 
-@numba.jit(nopython=True)
-def fits3d(space, pos, x, y, z):
+def prefix_sum(space):
     N = space.shape[0]
+    out = np.zeros((N + 1, N + 1, N + 1), dtype=np.int32)
+    for z in range(N):
+        for y in range(N):
+            for x in range(N):
+                out[z + 1, y + 1, x + 1] = space[z, y, x] \
+                    + out[z, y + 1, x + 1] + out[z + 1, y, x + 1] + out[z + 1, y + 1, x] \
+                    - out[z, y, x + 1] - out[z, y + 1, x] - out[z + 1, y, x] \
+                    + out[z, y, x]
+    return out
+
+
+def rectoid_sum(prefixes, lower, upper):
+    return prefixes[upper[2], upper[1], upper[0]] \
+            - prefixes[upper[2], upper[1], lower[0]] - prefixes[upper[2], lower[1], upper[0]] - prefixes[lower[2], upper[1], upper[0]] \
+            + prefixes[upper[2], lower[1], lower[0]] + prefixes[lower[2], upper[1], lower[0]] + prefixes[lower[2], lower[1], upper[0]] \
+            - prefixes[lower[2], lower[1], lower[0]]
+
+
+def fits3d(space, prefix, piece, out=None):
+    N = space.shape[0]
+    if not hasattr(piece, 'lower'):
+        piece.lower = np.min(piece.pos, axis=1)
+        piece.upper = np.max(piece.pos, axis=1)
+    if out is None:
+        out = np.empty((N, N, N), dtype=np.int32)
+    out.fill(-1)
+    collide = np.zeros((N, N, N), dtype=np.int8)
+    start = np.maximum(0, -piece.lower)
+    stop = np.minimum(N, N - piece.upper)
+    xl, yl, zl = start
+    xh, yh, zh = stop
+    pos = piece.pos
     for i in range(pos.shape[1]):
-        px = pos[0, i] + x
-        py = pos[1, i] + y
-        pz = pos[2, i] + z
-        if px < 0 or px >= N or py < 0 or py >= N or pz < 0 or pz >= N:
-            return False
-        c = space[pz, py, px]
-        if c != 0:
-            return False
-    return True
+        x, y, z = pos[:, i]
+        collide[zl:zh, yl:yh, xl:xh] += space[zl+z:zh+z, yl+y:yh+y, xl+x:xh+x]
+
+    # TODO: vectorise
+    for z in range(zl, zh):
+        for y in range(yl, yh):
+            for x in range(xl, xh):
+                if not collide[z, y, x]:
+                    lower = piece.lower + [x, y, z]
+                    upper = piece.upper + [x + 1, y + 1, z + 1]
+                    out[z, y, x] = rectoid_sum(prefix, lower, upper)
+    return out
 
 
-@numba.jit(nopython=True)
 def _biggest_cube(space, planes):
     N = space.shape[0]
     ans = 0
@@ -302,7 +336,6 @@ def _biggest_cube(space, planes):
     return ans
 
 
-@numba.jit(nopython=True)
 def best_singles3d(space, singles):
     N = space.shape[0]
     best = 0, 0, 0, 0
@@ -377,8 +410,12 @@ async def play_game(shelf, client):
 
     state = await client.get_match_info()
     old_effort = 0
+    shared = np.empty((world.size_shared,) * 2, np.int8)
+    own = np.empty((world.size_own,) * 3, np.int8)
     while True:
+        gc.collect()
         await client.wait()
+        logging.info('Starting turn')
         # Check if game ended
         state = await client.get_match_info()
         if state.total_effort < old_effort:
@@ -387,38 +424,43 @@ async def play_game(shelf, client):
             return
         old_effort = state.total_effort
         used_piece = False
+        logging.info('Got state')
         if state.my_turn:
-            shared = await client.get_shared_space()
-            own = await client.get_my_space()
+            shared = await client.get_shared_space(out=shared)
+            logging.info('Got shared')
+            own = await client.get_my_space(out=own)
+            logging.info('Getting prefix sum')
+            prefix = prefix_sum(own)
+            logging.info('Got prefix sum')
             opponent = await client.get_opponent_space()
             biggest = biggest_cube(own)
             biggest_possible = best_singles3d(own, state.me.single_cube)[-1]
             BIGGEST_CUBE_GAUGE.labels('me').set(biggest)
             BIGGEST_POTENTIAL_CUBE_GAUGE.labels('me').set(biggest_possible)
             BIGGEST_CUBE_GAUGE.labels('you').set(biggest_cube(opponent))
+            logging.info('Got metrics')
             avail_idx = await client.get_pieces_in_range()
             avail = [pieces[idx] for idx in avail_idx]
             avail2d = [pieces2d[idx] for idx in avail_idx]
             best = None
             cash = state.me.budget - state.me.profit_own
+            logging.info('Evaluating pieces')
             for i in range(len(avail)):
                 if avail[i].price > state.me.budget:
                     continue
                 own_pos = None
                 shared_pos = None
                 own_value = avail[i].value
-                # Be pessimistic
-                own_value *= (1 - world.quality_min * world.bad_penalty)
-                own_value = int(own_value)
                 loss = max(0, avail[i].price - cash)
-                for z in range(world.size_own):
-                    for y in range(world.size_own):
-                        if own_pos:
-                            break
-                        for x in range(world.size_own):
-                            if fits3d(own, avail[i].pos, x, y, z):
-                                own_pos = (x, y, z)
-                                break
+                best_hits = -1
+                fitness = fits3d(own, prefix, avail[i])
+                hits = np.max(fitness)
+                if hits >= 0:
+                    own_pos_flat = np.argmax(fitness)
+                    own_pos = [own_pos_flat % world.size_own,
+                               own_pos_flat // world.size_own % world.size_own,
+                               own_pos_flat // world.size_own**2]
+                    best_hits = hits
                 for y in range(world.size_shared):
                     for x in range(world.size_shared):
                         if fits2d(shared, avail2d[i].pos, x, y):
@@ -430,12 +472,16 @@ async def play_game(shelf, client):
                 if own_pos or shared_pos:
                     value = -loss
                     if own_pos:
+                        q = best_hits - world.quality_min
+                        scaling = world.good_bonus if q > 0 else world.bad_penalty
+                        own_value = int(own_value * (1 + scaling * q))
                         value += own_value
                     if shared_pos:
                         value += 0.01     # TODO: balance?
                     if value > 0:
                         if best is None or value > best.value:
                             best = Placement(i, own_pos=own_pos, shared_pos=shared_pos, value=value)
+            logging.info('Done evaluating pieces')
             if best is not None:
                 await client.buy_piece(best.idx + 1)
                 if best.own_pos:
