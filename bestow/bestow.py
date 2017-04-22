@@ -438,13 +438,18 @@ async def play_game(shelf, client):
         gc.collect()
         await client.wait()
         logging.info('Starting turn')
-        # Check if game ended
+        old_state = state
         state = await client.get_match_info()
+        # Check if game ended
         if state.total_effort < old_effort:
             logging.info('effort decreased (%d -> %d), game ended',
                           old_effort, state.total_effort)
             return
         old_effort = state.total_effort
+        # Validations
+        #assert state.me.effort == old_state.me.effort
+        #assert state.me.profit_own == old_state.me.profit_own, "
+
         used_piece = False
         logging.info('Got state')
         if state.my_turn:
@@ -503,12 +508,13 @@ async def play_game(shelf, client):
                 await client.buy_piece(best.idx + 1)
                 if best.own_pos:
                     await client.place_own_piece(*best.own_pos, 0, 0, 0)
+                    state.me.profit_own += best.value
                 if best.shared_pos:
                     await client.place_shared_piece(*best.shared_pos, 0, 0, 0)
                     place2d(shared, avail2d[best.idx], *best.shared_pos)
                 used_piece = True
             if used_piece:
-                state.me.effort += avail[i].effort
+                state.me.effort += avail[best.idx].effort
             else:
                 state.me.effort = state.you.effort + 1
             if state.me.effort >= world.effort_end:
