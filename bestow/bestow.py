@@ -57,6 +57,7 @@ PLAYER_FIELDS = [
 PLAYER_GAUGES = [Gauge('bestow_player_' + name[0], 'Player value of ' + name[0], labelnames=['player']) for name in PLAYER_FIELDS]
 NUM_PIECES_GAUGE = Gauge('bestow_num_pieces', 'Number of pieces in game')
 BIGGEST_CUBE_GAUGE = Gauge('bestow_biggest_cube', 'Biggest cube in space', labelnames=['player'])
+BIGGEST_POTENTIAL_CUBE_GAUGE = Gauge('bestow_biggest_potential_cube', 'Biggest cube if all single cubes added', labelnames=['player'])
 
 
 def parse(descr, value):
@@ -199,8 +200,7 @@ class Client(dl24.client.ClientBase):
     async def set_multiplier(self, color, mulitplier):
         pass
 
-    @command('GET_MY_SPACE')
-    async def get_my_space(self):
+    async def _get_space(self):
         N = int(await self.readline())
         arr = np.zeros((N, N, N), dtype=np.int8)
         for z in range(N):
@@ -208,6 +208,14 @@ class Client(dl24.client.ClientBase):
                 line = await self.readline()
                 arr[z, y, :] = [int(x) for x in line.split()]
         return arr
+
+    @command('GET_MY_SPACE')
+    async def get_my_space(self):
+        return await self._get_space()
+
+    @command('GET_OPPONENT_SPACE')
+    async def get_opponent_space(self):
+        return await self._get_space()
 
     @command('GET_SHARED_SPACE')
     async def get_shared_space(self):
@@ -372,9 +380,12 @@ async def play_game(shelf, client):
         if state.my_turn:
             shared = await client.get_shared_space()
             own = await client.get_my_space()
+            opponent = await client.get_opponent_space()
             biggest = biggest_cube(own)
-            print(best_singles3d(own, state.me.single_cube))
+            biggest_possible = best_singles3d(own, state.me.single_cube)[-1]
             BIGGEST_CUBE_GAUGE.labels('me').set(biggest)
+            BIGGEST_POTENTIAL_CUBE_GAUGE.labels('me').set(biggest_possible)
+            BIGGEST_CUBE_GAUGE.labels('you').set(biggest_cube(opponent))
             avail_idx = await client.get_pieces_in_range()
             avail = [pieces[idx] for idx in avail_idx]
             avail2d = [pieces2d[idx] for idx in avail_idx]
