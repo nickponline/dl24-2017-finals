@@ -308,27 +308,33 @@ OPERATION_TIME_fits3d = OPERATION_TIME.labels('fits3d')
 def fits3d(space, prefix, piece, out=None):
     N = space.shape[0]
     fix_piece(piece)
-    if out is None:
-        out = np.empty((N, N, N), dtype=np.int32)
-    out.fill(-1)
-    collide = np.zeros((N, N, N), dtype=np.int8)
     start = np.maximum(0, -piece.lower)
     stop = np.minimum(N, N - piece.upper)
+    if np.any(start >= stop):
+        return out
     xl, yl, zl = start
     xh, yh, zh = stop
     pos = piece.pos
+    space_bool = space.astype(np.bool_)
+    collide = np.ones((N, N, N), dtype=np.bool_)
+    collide[zl:zh, yl:yh, xl:xh].fill(False)
     for i in range(pos.shape[1]):
         x, y, z = pos[:, i]
-        collide[zl:zh, yl:yh, xl:xh] += space[zl+z:zh+z, yl+y:yh+y, xl+x:xh+x]
+        collide[zl:zh, yl:yh, xl:xh] |= space_bool[zl+z:zh+z, yl+y:yh+y, xl+x:xh+x]
 
-    # TODO: vectorise
-    for z in range(zl, zh):
-        for y in range(yl, yh):
-            for x in range(xl, xh):
-                if not collide[z, y, x]:
-                    lower = piece.lower + [x, y, z]
-                    upper = piece.upper + [x + 1, y + 1, z + 1]
-                    out[z, y, x] = rectoid_sum(prefix, lower, upper)
+    if out is None:
+        out = np.empty((N, N, N), dtype=np.int32)
+    out.fill(0)
+    for dz in (piece.lower[2], piece.upper[2] + 1):
+        for dy in (piece.lower[1], piece.upper[1] + 1):
+            for dx in (piece.lower[0], piece.upper[0] + 1):
+                sign = -1
+                if dz: sign *= -1
+                if dy: sign *= -1
+                if dx: sign *= -1
+                out[zl:zh, yl:yh, xl:xh] += prefix[zl+dz:zh+dz, yl+dy:yh+dy, xl+dx:xh+dx] * sign
+
+    out[collide] = -1
     return out
 
 
