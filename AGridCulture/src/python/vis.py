@@ -1,16 +1,28 @@
 #!/usr/bin/env python3
+from __future__ import absolute_import
+from __future__ import print_function
+
 import dl24.listener
 from   dl24.visualization import Window
 from   dl24.proxy import Direction
 
+from OpenGL.GL import *
+from OpenGL.GLUT import *
+from OpenGL.GLU import *
+
+import time
+import random
+import shapes
+from six.moves import range
+
 import asyncio
-import matplotlib
-import gi
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk
-import gbulb
 from watchdog.observers.polling import PollingObserver
 import sys
+
+window = 0
+width, height = 600, 600
+TARGET_FPS = 30.0
+frame = 0
 
 posts = None
 workers = None
@@ -23,105 +35,98 @@ class Post(object):
     def __init__(self, x, y, c):
         self.x = x
         self.y = y
-        self.c = c
 
-        size = 0.4
+        self.set_color(c)
+
+        size = 0.8
         self.xy = [
             [ x + size, y + size],
-            [ x + size, y - size],
-            [ x - size, y - size],
-            [ x - size, y + size],
+            [ x + size, y],
+            [ x, y],
+            [ x, y + size],
         ]
 
-        artists = self.draw(window.axes)
-        window.add_artists(artists)
 
-    def draw(self, axes):
-        self.shape = matplotlib.patches.Polygon( self.xy, closed=True, fill=False, edgecolor='black', picker=1)
-        self.set_color(self.c)
-        self.artist = axes.axes.add_patch(self.shape)
-        return [self.artist]
+    def draw(self):
+        glColor3f(*self.color)
 
-    def set_color(self, c):
-        self.c = c
-        self.shape.set_facecolor('green' if self.c == C else 'white' if self.c == '-' else 'black' if self.c == '#' else 'red')
+        glBegin(GL_LINE_LOOP)
+        for x, y in self.xy:
+            glVertex2f(x, y)
+        glEnd()
         
+        
+    def set_color(self, c):
+        if c == C:
+            self.color = (0., 1., 0.)
+        elif c == '-':
+            self.color = (1., 1., 1.)
+        elif c == '#':
+            self.color = (0., 0., 0.)
+        else:
+            self.color = (1., 0., 0.)
+        
+    def get_bound(self):
+        return max([
+            max(k) for k in self.xy
+        ])
 
-# Represents a pickable coloured square with and number of clicks counter
-class Square(object):
-    def __init__(self, x, y, size):
-        self.x = x
-        self.y = y
+def refresh2d(width, height, bound):
+    glViewport(0, 0, width, height)
+    glMatrixMode(GL_PROJECTION)
+    glLoadIdentity()
+    glOrtho(0, bound, 0, bound, 0.0, 1.0)
+    glMatrixMode (GL_MODELVIEW)
+    glLoadIdentity()
 
-        self.xy = [
-            [ x + size, y + size],
-            [ x + size, y - size],
-            [ x - size, y - size],
-            [ x - size, y + size],
-        ]
+def draw():
+    global frame
 
-        self.count = 0
+    last_fps = 1 / (time.time() - frame)
+    if last_fps > TARGET_FPS: return True
+    frame = time.time()
 
-    def draw(self, axes):
-        self.shape = matplotlib.patches.Polygon( self.xy, closed=True, fill=False, edgecolor='black', picker=1)
-        self.artist = axes.axes.add_patch(self.shape)
-        shapes[self.artist] = self
-        self.text = axes.text( self.x, self.y,  str(self.count), horizontalalignment='center', verticalalignment='center')
-        self.text.set_text('{}'.format(self.count))
-        return [self.artist, self.text]
+    #print('Rendering')
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+    glLoadIdentity()
 
-    def onpick(self):
-        import random
-        color = random.choice(['yellow', 'green', 'blue'])
-        self.shape.set_facecolor(color)
-        self.shape.set_fill(True)
-        self.count += 1
-        self.text.set_text('{}'.format(self.count))
-        print("Square was picked")
+    # find the bounds of everything in the scene to keep everything in view
+    if posts is not None:
+        bound = max([max([post.get_bound() for post in post_line]) for post_line in posts])
+    else:
+        bound = 1
 
+    refresh2d(width, height, bound)
 
-class Window(dl24.visualization.Window):
-    def __init__(self, *args, **kwargs):
-        super(Window, self).__init__(*args, **kwargs)
+    if posts is not None:
+        for post_line in posts:
+            for post in post_line:
+                post.draw()
 
-        #self.canvas.mpl_connect('pick_event', self._pick_handler)
+    # Render FPS counter
+    glWindowPos2f(0,0)
+    glutBitmapString(GLUT_BITMAP_TIMES_ROMAN_24, b'FPS: %d' % (int(last_fps),))
 
-    def _reverse(self, button):
-        for dot in self.dots:
-            dot.direction = -dot.direction
+    glutSwapBuffers()
+    return False
 
-    def _pick_handler(self, event):
-        if event.artist in shapes:
-            shapes[event.artist].onpick()
-
-    def make_widgets(self, canvas):
-        #pass
-        # buttons = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 4)
-        # reverse_button = Gtk.Button.new_with_label("Reverse")
-        # reverse_button.connect('clicked', self._reverse)
-        # buttons.pack_start(reverse_button, False, False, 0)
-
-        box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 4)
-        # box.pack_start(buttons, False, True, 0)
-        box.pack_start(canvas, True, True, 0)
-        self.add(box)
-
-    async def animate(self):
-        text = self.axes.text(
-            0.02, 0.98, '',
-            horizontalalignment='left', verticalalignment='top',
-            transform=self.axes.transAxes)
-        self.add_artists([text])
-        t = 0.0
-        while True:
-
-            text.set_text('{:.2f}'.format(t))
-            self.event_source()
-            await asyncio.sleep(0.01)
-            t += 0.02
-            # for dot in self.dots:
-            #     dot.advance(0.02)
-
+def idle_func():
+    print('Sleeping')
+    time.sleep(0.01)
+    
+def async_vis():
+    glutInit()
+    glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_ALPHA | GLUT_DEPTH)
+    glutInitWindowSize(width, height)
+    glutInitWindowPosition(0, 0)
+    window = glutCreateWindow("Visualizer")
+    glutDisplayFunc(draw)
+    #glutKeyboardFunc(keyboardHandler)
+    #glutSpecialFunc(specialKeyboardHandler)
+    glutMouseFunc(mouseHandler)
+    glutMouseWheelFunc(mouseWheelHandler)
+    glutIdleFunc(draw)
+    glutMainLoop()
 
 async def async_main(log_file):
     global A, C, posts, workers, enemyWorkers
@@ -156,6 +161,7 @@ async def async_main(log_file):
                         parts = message.split(' ')
                         A = int(parts[0])
                         C = parts[2]
+                        print('A=%d and C=%s' % (A, C))
                         posts = [[Post(x, y, '-') for x in range(0, A)] for y in range(0, A)]
                         workers = {}
                         enemyWorkers = {}
@@ -169,14 +175,13 @@ async def async_main(log_file):
 
 
 if __name__ == '__main__':
-    gbulb.install(gtk=True)
-    window = Window(title='Demo')
-    window.set_default_size(1024, 768)
-    window.show_all()
-
+    from threading import Thread
+    glut_thread = Thread(target=async_vis)
+    glut_thread.setDaemon(True)
+    glut_thread.start()
     loop = asyncio.get_event_loop()
-    loop.create_task(window.animate())
-    #loop.run_until_complete(consume_proxy_log(sys.argv[1]))
-    #loop.run_forever()
+    #loop.create_task(async_main(sys.argv[1]))
+    #loop.run_until_complete(async_vis())
     loop.run_until_complete(async_main(sys.argv[1]))
+    #loop.run_forever()
     
