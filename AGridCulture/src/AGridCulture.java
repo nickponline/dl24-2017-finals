@@ -2,6 +2,8 @@ import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.PriorityQueue;
 import java.util.Queue;
@@ -107,7 +109,7 @@ public class AGridCulture
             for (int i = 0; i < A; i++) {
                 for (int j = 0; j < A; j++) {
                     if (dirX[i][j] == 0 && dirY[i][j] == 0) {
-                        assert(distance[i][j] == -1 || (i == x && j == y));
+                        _assert(distance[i][j] == -1 || (i == x && j == y));
                     }
                 }
             }
@@ -155,7 +157,7 @@ public class AGridCulture
             ".........",
             ".........",
             ".........",
-        }, false);
+        });
         assertHarvestMatch(
             3, 1,
             new int[][] {
@@ -166,6 +168,13 @@ public class AGridCulture
             }
         );
         
+        C = 'A';
+        assertFindHarvest(new int[][][] {
+            {
+                {3, 1}, {4, 1}, {3, 2}, {4, 2}
+            }
+        });
+
         initMap(new String[] {
             "................",
             ".BBBBBBBBBBBBB..",
@@ -183,44 +192,21 @@ public class AGridCulture
             "................",
             "................",
             "................",
-        }, false);
+        });
         
-        assertHarvestMatch(
-            1, 1,
-            new int[][] {
-                {1, 1}, {2, 1}, {3, 1}, {4, 1}, {5, 1}, {6, 1}, {7, 1}, {8, 1}, {9, 1}, {10, 1}, {11, 1}, {12, 1}, {13, 1},
-                {1, 2}, {13, 2},
-                {1, 3}, {13, 3},
-                {1, 4}, {13, 4},
-                {1, 5}, {13, 5},
-                {1, 6}, {13, 6},
-                {1, 7}, {13, 7},
-                {1, 8}, {2, 8}, {3, 8}, {4, 8}, {5, 8}, {6, 8}, {7, 8}, {8, 8}, {9, 8}, {10, 8}, {11, 8}, {12, 8}, {13, 8},
-            },
-            new int[][] {}
-        );
-        assertHarvestMatch(
-            4, 2,
-            new int[][] {
-                {3, 2}, {4, 2}, {5, 2}, {6, 2}, {7, 2}, {8, 2}, {9, 2},
-                {3, 3}, {9, 3}, {10, 3},
-                {3, 4}, {9, 4}, {10, 4},
-                {3, 5}, {9, 5}, {10, 5},
-                {3, 6}, {4, 6}, {5, 6}, {6, 6}, {7, 6}, {8, 6}, {9, 6},
-            },
-            new int[][] {}
-        );
-        assertHarvestMatch(
-            6, 5,
-            new int[][] {
-                {4, 3}, {5, 3}, {6, 3}, {7, 3},
-                {4, 4}, {7, 4},
-                {4, 5}, {5, 5}, {6, 5}, {7, 5}
-            },
-            new int[][] {}
-        );
-        
-        H = true;
+        C = 'B';
+        assertFindHarvest(new int[][][] {
+            {
+                {1, 1}, {2, 1}, {3, 1}, {4, 1}, {5, 1}, {6, 1}, {7, 1}, {8, 1}, {9, 1}, {10, 1}, {11, 1}, {12, 1},
+                {1, 2}, {2, 2}, {3, 2}, {4, 2}, {5, 2}, {6, 2}, {7, 2}, {8, 2}, {9, 2}, {10, 2}, {11, 2}, {12, 2},
+                {1, 3}, {2, 3}, {3, 3}, {4, 3}, {5, 3}, {6, 3}, {7, 3}, {8, 3}, {9, 3}, {10, 3}, {11, 3}, {12, 3},
+                {1, 4}, {2, 4}, {3, 4}, {4, 4}, {5, 4}, {6, 4}, {7, 4}, {8, 4}, {9, 4}, {10, 4}, {11, 4}, {12, 4},
+                {1, 5}, {2, 5}, {3, 5}, {4, 5}, {5, 5}, {6, 5}, {7, 5}, {8, 5}, {9, 5}, {10, 5}, {11, 5}, {12, 5},
+                {1, 6}, {2, 6}, {3, 6}, {4, 6}, {5, 6}, {6, 6}, {7, 6}, {8, 6}, {9, 6}, {10, 6}, {11, 6}, {12, 6},
+                {1, 7}, {2, 7}, {3, 7}, {4, 7}, {5, 7}, {6, 7}, {7, 7}, {8, 7}, {9, 7}, {10, 7}, {11, 7}, {12, 7},
+            }
+        });
+
         assertHarvestMatch(
             1, 1,
             new int[][] {
@@ -282,7 +268,7 @@ public class AGridCulture
             "............",
             "............",
             "............",
-        }, false);
+        });
         assertHarvestMatch(
             1, 1,
             new int[][] {
@@ -294,26 +280,32 @@ public class AGridCulture
         );
     }
 
-    private void initMap(String[] s, boolean killInternal)
+    private void initMap(String[] s)
     {
         A = s.length;
         map = new char[A][A];
         harvestPost = new boolean[A][A];
         harvestCell = new boolean[A][A];
+        scored = new boolean[A][A];
         for (int i = 0; i < A; i++) {
             for (int j = 0; j < A; j++) {
                 map[j][i] = s[i].charAt(j);
             }
         }
-        
-        H = killInternal;
     }
 
+    private void _assert(boolean condition)
+    {
+        if (!condition) {
+            throw new RuntimeException();
+        }
+    }
+    
     private void assertHarvestMatch(int x, int y, int[][] perimeter, int[][] internal)
         throws Exception
     {
         Harvest harvest = getHarvest(x, y);
-        assert(perimeter.length == harvest.perimeterX.length);
+        _assert(perimeter.length == harvest.perimeterX.length);
         for (int i = 0; i < perimeter.length; i++) {
             boolean found = false;
             for (int j = 0; j < harvest.perimeterX.length; j++) {
@@ -322,7 +314,7 @@ public class AGridCulture
                     break;
                 }
             }
-            assert(found);
+            _assert(found);
         }
         for (int j = 0; j < harvest.perimeterX.length; j++) {
             boolean found = false;
@@ -332,10 +324,10 @@ public class AGridCulture
                     break;
                 }
             }
-            assert(found);
+            _assert(found);
         }
 
-        assert(internal.length == harvest.internalX.length);
+        _assert(internal.length == harvest.internalX.length);
         for (int i = 0; i < internal.length; i++) {
             boolean found = false;
             for (int j = 0; j < harvest.internalX.length; j++) {
@@ -344,7 +336,7 @@ public class AGridCulture
                     break;
                 }
             }
-            assert(found);
+            _assert(found);
         }
         for (int j = 0; j < harvest.internalX.length; j++) {
             boolean found = false;
@@ -354,7 +346,56 @@ public class AGridCulture
                     break;
                 }
             }
-            assert(found);
+            _assert(found);
+        }
+    }
+
+    private void assertFindHarvest(int[][][] harvests)
+    {
+        List<Area> areas = getAreasToScore();
+        _assert(harvests.length == areas.size());
+        for (int i = 0; i < harvests.length; i++) {
+            int[][] harvest = harvests[i];
+            
+            // Find an area which matches this harvest.
+            boolean found = false;
+            for (int a = 0; a < areas.size(); a++) {
+                Area area = areas.get(a);
+                if (area.x.length != harvest.length) {
+                    continue;
+                }
+                boolean ok = true;
+                for (int j = 0; j < harvest.length; j++) {
+                    boolean foundEl = false;
+                    for (int k = 0; k < area.x.length; k++) {
+                        if (area.x.get(k) == harvest[j][0] && area.y.get(k) == harvest[j][1]) {
+                            foundEl = true;
+                            break;
+                        }
+                    }
+                    if (!foundEl) {
+                        ok = false;
+                        break;
+                    }
+                }
+                for (int k = 0; k < area.x.length; k++) {
+                    boolean foundEl = false;
+                    for (int j = 0; j < harvest.length; j++) {
+                        if (area.x.get(k) == harvest[j][0] && area.y.get(k) == harvest[j][1]) {
+                            foundEl = true;
+                            break;
+                        }
+                    }
+                    if (!foundEl) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (ok) {
+                    found = true;
+                }
+            }
+            _assert(found);
         }
     }
 
@@ -640,6 +681,7 @@ public class AGridCulture
         for (int i = 0; i < A; i++) {
             Arrays.fill(harvestPost[i], false);
             Arrays.fill(harvestCell[i], false);
+            Arrays.fill(scored[i],  false);
         }
         harvestPost[x][y] = true;
         Queue<Integer> q = new ArrayDeque<>();
@@ -702,15 +744,20 @@ public class AGridCulture
                     for (int c = 0; c < 4; c++) {
                         int nx = i + cx[c];
                         int ny = j + cy[c];
-                        if (harvestPost[nx][ny]) {
+                        if (harvestPost[nx][ny] && !scored[nx][ny]) {
+                            scored[nx][ny] = true;
                             numPerimeter++;
                         }
-                        else if (map[nx][ny] != '.' && map[nx][ny] != '#') {
+                        else if (map[nx][ny] != '.' && map[nx][ny] != '#' && !scored[nx][ny]) {
+                            scored[nx][ny] = true;
                             numInternal++;
                         }
                     }
                 }
             }
+        }
+        for (int i = 0; i < A; i++) {
+            Arrays.fill(scored[i], false);
         }
         Harvest harvest = new Harvest(numPerimeter, numInternal);
         numPerimeter = 0; numInternal = 0;
@@ -720,14 +767,16 @@ public class AGridCulture
                     for (int c = 0; c < 4; c++) {
                         int nx = i + cx[c];
                         int ny = j + cy[c];
-                        if (harvestPost[nx][ny]) {
+                        if (harvestPost[nx][ny] && !scored[nx][ny]) {
                             harvest.perimeterX[numPerimeter] = nx;
                             harvest.perimeterY[numPerimeter] = ny;
+                            scored[nx][ny] = true;
                             numPerimeter++;
                         }
-                        else if (map[nx][ny] != '.' && map[nx][ny] != '#') {
+                        else if (map[nx][ny] != '.' && map[nx][ny] != '#' && !scored[nx][ny]) {
                             harvest.internalX[numInternal] = nx;
                             harvest.internalY[numInternal] = ny;
+                            scored[nx][ny] = true;
                             numInternal++;
                         }
                     }
@@ -739,6 +788,58 @@ public class AGridCulture
 
     private void scoreAreas()
         throws Exception
+    {
+        List<Area> areas = getAreasToScore();
+        Collections.sort(areas);
+        for (Area area : areas) {
+            // How big a size do we want before we harvest?
+            if (area.x.length >= 4 && canExecuteCommand()) {
+                // Yum!
+                System.err.println("Harvesting at " + area.sx + " " + area.sy + " with size of " + area.x.length);
+                client.writeCommand("SCORE", area.sx, area.sy);
+            }
+            else {
+                System.err.println("Skipping area of size " + area.x.length);
+            }
+        }        
+    }
+    
+    class IntList
+    {
+        int[] list = new int[1];
+        int length = 0;
+        public void add(int x)
+        {
+            if (length >= list.length) {
+                list = Arrays.copyOf(list, list.length * 2);
+            }
+            list[length++] = x;
+        }
+        public int get(int i)
+        {
+            if (i >= length) {
+                throw new ArrayIndexOutOfBoundsException(i);
+            }
+            else {
+                return list[i];
+            }
+        }
+        public void clear()
+        {
+            length = 0;
+        }
+    }
+    class Area implements Comparable<Area> {
+        IntList x = new IntList(), y = new IntList();
+        int sx, sy;
+        
+        public int compareTo(Area that)
+        {
+            return Integer.compare(that.x.length, x.length);
+        }
+    }
+
+    private List<Area> getAreasToScore()
     {
         for (int i = 0; i < A; i++) {
             Arrays.fill(scored[i], false);
@@ -785,10 +886,11 @@ public class AGridCulture
         }
         
         // Find areas to score.
+        List<Area> areas = new ArrayList<>();
         boolean value = count < (A * A / 2);
         for (int x = 0; x < A - 1; x++) {
             for (int y = 0; y < A - 1; y++) {
-                if (scored[x][y] == value) {
+                if (scored[x][y] == value && !harvestCell[x][y]) {
                     // Flood-fill in here, finding any POST to score from.
                     int scoreX = -1, scoreY = -1;
                     int size = 1;
@@ -796,6 +898,10 @@ public class AGridCulture
                     qy[0] = y;
                     qt = 0;
                     qh = 1;
+                    Area area = new Area();
+                    areas.add(area);
+                    area.x.add(x);
+                    area.y.add(y);
                     harvestCell[x][y] = true;
                     while (qt < qh) {
                         int curx = qx[qt];
@@ -814,14 +920,12 @@ public class AGridCulture
                             if (ny < 0) ny += A - 1;
                             if (ny >= A - 1) ny -= A - 1;
 
-                            // We can only cross to the next cell if this does not cross a fence.
-                            if (map[chk1x][chk1y] == C && map[chk2x][chk2y] == C) {
+                            if (scored[nx][ny] != value) {
                                 // If this fence crossing would take us outside the contained area,
                                 // and if we do not yet have a POST to activate the score from, then
-                                // make a note of one of these POSTs now. We must do this check since
-                                // otherwise we might catch a fence that is contained within the BLOB
-                                // that we're filling.
-                                if (scored[nx][ny] != value && scoreX == -1) {
+                                // make a note of one of these POSTs now.
+                                if (scoreX == -1) {
+                                    _assert(map[chk1x][chk1y] == C);
                                     scoreX = chk1x;
                                     scoreY = chk1y;
                                 }
@@ -832,31 +936,32 @@ public class AGridCulture
                                 harvestCell[nx][ny] = true;
                                 qx[qh] = nx;
                                 qy[qh] = ny;
+                                area.x.add(nx);
+                                area.y.add(ny);
                                 qh++;
                                 size++;
                             }                
                         }
                     }
-                    assert(scoreX != -1);
-                    
-                    // How big a size do we want before we harvest?
-                    if (size >= 9 && canExecuteCommand()) {
-                        // Yum!
-                        System.err.println("Harvesting at " + scoreX + " " + scoreY + " with size of " + size);
-                        client.writeCommand("SCORE", scoreX, scoreY);
+                    if (scoreX == -1) {
+                        System.err.println("Bad area!");
+                        for (int i = 0; i < A - 1; i++) {
+                            for (int j = 0; j < A - 1; j++) {
+                                if (harvestCell[i][j]) {
+                                    System.err.println(i + " " + j);
+                                }
+                            }
+                        }
+                        throw new RuntimeException("Sprack!");
+                    }
+                    else {
+                        area.sx = scoreX;
+                        area.sy = scoreY;
                     }
                 }
             }
         }
-        /*PrintWriter out = new PrintWriter(new BufferedWriter(new FileWriter("/tmp/map.out", true)));
-        out.println("Checking for scores with " + C);
-        for (int i = 0; i < A; i++) {
-            for (int j = 0; j < A; j++) {
-                out.print(map[j][i]);
-            }
-            out.println();
-        }
-        out.close();*/
+        return areas;
     }
 
     private void placeMarkers()
