@@ -25,6 +25,8 @@ public class Client
 
     private final Server myPrometheusServer;
 
+    private int commandsUsed = 0;
+    
     public Client(String username,
                   String password,
                   String host,
@@ -124,6 +126,7 @@ public class Client
                 sb.append(arg.toString());
             }
             writeLine(sb.toString());
+            commandsUsed++;
             readOk();
         }
         finally {
@@ -146,5 +149,27 @@ public class Client
             System.err.println("Stopping HTTP server");
             myPrometheusServer.stop();
         }
+    }
+    
+    public void doWait()
+        throws IOException, ProtocolException
+    {
+        writeCommand("WAIT");
+        
+        // Now consume one line of the form "WAITING <time>"
+        String[] parts = readLine("WAITING [0-9.]+").split(" ");
+        System.err.println("Waiting " + Double.parseDouble(parts[1]) + " for next turn");
+        readOk();
+        commandsUsed = 0;
+    }
+    
+    public void logOperationLatency()
+    {
+        
+    }
+    
+    public int getCommandsUsed()
+    {
+        return commandsUsed;
     }
 }
