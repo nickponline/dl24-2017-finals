@@ -150,7 +150,7 @@ class ClientBase(object):
         self.reader, self.writer = await asyncio.open_connection(
             self.host, self.port, limit=2**20)
         # Do the login protocol
-        prompt = await self.readline(expected=re.compile('LOGIN|PROXY-NOLOGIN'))
+        prompt = await self.readline(expected=re.compile('LOGIN|PROXY-NOLOGIN'), parse_failed=True)
         if prompt == 'LOGIN':
             self.writeline(self.user)
             await self.readline(expected='PASS')

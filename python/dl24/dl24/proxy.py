@@ -85,6 +85,17 @@ class Client(object):
 
     async def run(self, proxy):
         peer = self.writer.get_extra_info('peername')
+        if proxy.clients:
+            existing = next(iter(proxy.clients))
+            existing_peer = existing.writer.get_extra_info('peername')
+            _logger.warn('Rejecting client %s as %s is already connected',
+                         peer, existing_peer)
+            error = 'FAILED 10000 Client {} is already connected\n'.format(existing_peer)
+            self.writer.write(error.encode('utf-8'))
+            await self.writer.drain()
+            self.writer.close()
+            return
+
         _logger.info('Client %s connected', peer)
         proxy.clients.add(self)
         self.writer.write(b'PROXY-NOLOGIN\n')
