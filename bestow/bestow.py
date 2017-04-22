@@ -489,15 +489,12 @@ async def play_game(shelf, client):
                 if len(good_y):
                     shared_pos = (good_x[0], good_y[0])
 
-                if own_pos or shared_pos:
+                if own_pos:
                     value = -loss
-                    if own_pos:
-                        q = best_hits - world.quality_min
-                        scaling = world.good_bonus if q > 0 else world.bad_penalty
-                        own_value = int(own_value * (1 + scaling * q))
-                        value += own_value
-                    if shared_pos:
-                        value += 0.01     # TODO: balance?
+                    q = best_hits - world.quality_min
+                    scaling = world.good_bonus if q > 0 else world.bad_penalty
+                    own_value = int(own_value * (1 + scaling * q))
+                    value += own_value
                     if value > 0:
                         if best is None or value > best.value:
                             best = Placement(i, own_pos=own_pos, shared_pos=shared_pos, value=value)
