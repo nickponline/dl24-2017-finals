@@ -8,7 +8,7 @@ import socket
 import prometheus_client
 
 
-COMMAND_TIME = prometheus_client.Summary('dl24_command_time_seconds', 'Time between issuing command and receiving reply', labelnames=['command'])
+COMMAND_TIME = prometheus_client.Histogram('dl24_command_time_seconds', 'Time between issuing command and receiving reply', labelnames=['command'])
 RESPONSES_OK = prometheus_client.Counter('dl24_responses_ok_total', 'Total number of successful requests', labelnames=['command'])
 RESPONSES_FAILED = prometheus_client.Counter('dl24_responses_failed_total', 'Total number of commands with failed responses', labelnames=['command'])
 RESPONSES_PROTOCOL_ERROR = prometheus_client.Counter('dl24_responses_protocol_error_total', 'Total number of commands with protocol errors in response', labelnames=['command'])
