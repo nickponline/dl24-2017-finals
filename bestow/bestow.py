@@ -307,15 +307,16 @@ async def play_game(shelf, client):
     pieces2d = {piece.id: Piece2D(piece) for piece in pieces.values()}
 
     state = await client.get_match_info()
+    old_effort = 0
     while True:
         await client.wait()
         # Check if game ended
-        old_state = state
         state = await client.get_match_info()
-        if state.total_effort < old_state.total_effort:
+        if state.total_effort < old_effort:
             logging.info('effort decreased (%d -> %d), game ended',
                           old_state.total_effort, state.total_effort)
             return
+        old_effort = state.total_effort
         used_piece = False
         if state.my_turn:
             shared = await client.get_shared_space()
