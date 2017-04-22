@@ -7,6 +7,7 @@ import shelve
 import math
 from enum import Enum
 import numpy as np
+import numba
 import dl24.client
 from dl24.client import command, ProtocolError, Failure
 from prometheus_client import Counter, Gauge
@@ -208,14 +209,16 @@ class Client(dl24.client.ClientBase):
         pass
 
 
-def fits2d(space, piece, x, y):
-    offset = np.array([[x], [y]], dtype=np.int8)
-    pos = piece.pos + offset
-    if np.min(pos) < 0 or np.max(pos) >= space.shape[0]:
-        return False    # Exceeds edges
+@numba.jit(nopython=True)
+def fits2d(space, pos, x, y):
+    N = space.shape[0]
     for i in range(pos.shape[1]):
-        c = space[pos[1, i], pos[0, i]]
-        if c:
+        px = pos[0, i] + x
+        py = pos[1, i] + y
+        if px < 0 or px >= N or py < 0 or py >= N:
+            return False
+        c = space[py, px]
+        if c != 0:
             return False
     return True
 
@@ -290,7 +293,7 @@ async def play_game(shelf, client):
             for i in range(len(avail)):
                 for y in range(world.size_shared):
                     for x in range(world.size_shared):
-                        if fits2d(shared, avail2d[i], x, y) and avail[i].price <= state.me.budget:
+                        if fits2d(shared, avail2d[i].pos, x, y) and avail[i].price <= state.me.budget:
                             best = i, x, y
             if best is not None:
                 i, x, y = best
