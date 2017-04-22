@@ -7,9 +7,9 @@ password: frlntpxwgb
 Port numbers for Prometheus
 ---------------------------
 
-Problem 1: 6745, 6746, 6747
-Problem 2: 7745, 7746, 7747
-Problem 3: 8745, 8746, 8747
+Problem 1: 6011, 6012, 6013
+Problem 2: 6021, 6022, 6023
+Problem 3: 6031, 6032, 6033
 
 Prometheus server: http://sniper:9090/
 
