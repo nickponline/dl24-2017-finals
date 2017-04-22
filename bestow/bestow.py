@@ -316,7 +316,7 @@ async def play_game(shelf, client):
                     best = -1
                     best_score = -1.0
                     for i in range(1, world.colors + 1):
-                        if state.you.multipliers[i] == multiplier:
+                        if state.me.multipliers[i] > 0 or state.you.multipliers[i] == multiplier:
                             continue
                         if cscores[i] > best_score:
                             best_score = cscores[i]
