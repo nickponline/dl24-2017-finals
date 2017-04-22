@@ -62,16 +62,17 @@ def command(name):
             for arg in bind.args[1:]:
                 fields.append(str(arg))
             with COMMAND_TIME.labels(name).time():
-                self.writeline(' '.join(fields))
-                try:
-                    await self.read_ok()
-                    ret = await func(*bind.args, **bind.kwargs)
-                except Failure:
-                    RESPONSES_FAILED.labels(name).inc()
-                    raise
-                except ProtocolError:
-                    RESPONSES_PROTOCOL_ERROR.labels(name).inc()
-                    raise
+                with (await self._lock):
+                    self.writeline(' '.join(fields))
+                    try:
+                        await self.read_ok()
+                        ret = await func(*bind.args, **bind.kwargs)
+                    except Failure:
+                        RESPONSES_FAILED.labels(name).inc()
+                        raise
+                    except ProtocolError:
+                        RESPONSES_PROTOCOL_ERROR.labels(name).inc()
+                        raise
                 RESPONSES_OK.labels(name).inc()
                 return ret
         # Force the labels to exist immediately
@@ -96,6 +97,7 @@ class ClientBase(object):
         self.port = port
         self.user = user
         self.password = password
+        self._lock = asyncio.Lock()
 
     async def readline(self, expected=None, parse_failed=False):
         """Retrieves a single line, with the trailing newline removed.
