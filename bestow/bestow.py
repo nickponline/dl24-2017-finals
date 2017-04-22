@@ -56,6 +56,7 @@ PLAYER_FIELDS = [
 
 PLAYER_GAUGES = [Gauge('bestow_player_' + name[0], 'Player value of ' + name[0], labelnames=['player']) for name in PLAYER_FIELDS]
 NUM_PIECES_GAUGE = Gauge('bestow_num_pieces', 'Number of pieces in game')
+BIGGEST_CUBE_GAUGE = Gauge('bestow_biggest_cube', 'Biggest cube in space', labelnames=['player'])
 
 
 def parse(descr, value):
@@ -255,6 +256,36 @@ def fits3d(space, pos, x, y, z):
     return True
 
 
+@numba.jit(nopython=True)
+def _biggest_cube(space, planes):
+    N = space.shape[0]
+    ans = 0
+    cur = 0
+    nxt = 1
+    for z in range(N - 1, -1, -1):
+        for y in range(N - 1, -1, -1):
+            for x in range(N - 1, -1, -1):
+                top = N
+                for dz in range(2):
+                    for dy in range(2):
+                        for dx in range(2):
+                            if dx + dy + dz == 0:
+                                v = N if space[z, y, x] else 0
+                            else:
+                                v = planes[cur ^ dz, y + dy, x + dx] + 1
+                            top = min(top, v)
+                planes[cur, y, x] = top
+                ans = max(ans, top)
+        cur, nxt = nxt, cur
+    return ans
+
+
+def biggest_cube(space):
+    N = space.shape[0]
+    planes = np.zeros((2, N + 1, N + 1), np.int32)
+    return _biggest_cube(space, planes)
+
+
 def place2d(space, piece, x, y):
     offset = np.array([[x], [y]], dtype=np.int8)
     pos = piece.pos + offset
@@ -321,6 +352,8 @@ async def play_game(shelf, client):
         if state.my_turn:
             shared = await client.get_shared_space()
             own = await client.get_my_space()
+            biggest = biggest_cube(own)
+            BIGGEST_CUBE_GAUGE.labels('me').set(biggest)
             avail_idx = await client.get_pieces_in_range()
             avail = [pieces[idx] for idx in avail_idx]
             avail2d = [pieces2d[idx] for idx in avail_idx]
@@ -366,7 +399,6 @@ async def play_game(shelf, client):
                 state.me.effort += avail[i].effort
             else:
                 state.me.effort = state.you.effort + 1
-            logging.info(color_scores(shared, world))
             if state.me.effort >= world.effort_end:
                 # Game is about to end, figure out multipliers to use
                 logging.info('Game ending, setting multipliers')
@@ -415,4 +447,3 @@ if __name__ == '__main__':
 
     loop = asyncio.get_event_loop()
     loop.run_until_complete(main())
-
