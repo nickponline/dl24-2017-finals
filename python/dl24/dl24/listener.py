@@ -25,7 +25,7 @@ class FileReadTransport(asyncio.ReadTransport):
     """Transport that reads from a file, using watchdog to check
     for more data being appended.
     """
-    def __init__(self, loop, filename, protocol, observer=None, extra=None):
+    def __init__(self, loop, filename, protocol, observer=None, extra=None, seek_to_end=False):
         super(FileReadTransport, self).__init__(extra)
         if loop is None:
             loop = asyncio.get_event_loop()
@@ -35,6 +35,11 @@ class FileReadTransport(asyncio.ReadTransport):
         self._task = None
         self._closing = False
         self._file = open(filename, 'rb')
+
+        if seek_to_end:
+            self._file.seek(-500, 2)
+            self._file.readline()
+
         self._task = loop.create_task(self._reader())
         if observer is None:
             self._observer = watchdog.observers.Observer()
@@ -88,13 +93,13 @@ class FileReadTransport(asyncio.ReadTransport):
         self.close()
 
 
-def open_file_connection(filename, observer=None, loop=None):
+def open_file_connection(filename, observer=None, loop=None, seek_to_end=False):
     """Open a :class:`asyncio.StreamReader` which reads from `filename`."""
     if loop is None:
         loop = asyncio.get_event_loop()
     reader = asyncio.StreamReader(limit=1048576, loop=loop)
     protocol = asyncio.StreamReaderProtocol(reader, loop=loop)
-    transport = FileReadTransport(loop, filename, protocol, observer=observer)
+    transport = FileReadTransport(loop, filename, protocol, observer=observer, seek_to_end=seek_to_end)
     return reader
 
 
