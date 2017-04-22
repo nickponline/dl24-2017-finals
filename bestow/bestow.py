@@ -314,7 +314,7 @@ async def play_game(shelf, client):
         state = await client.get_match_info()
         if state.total_effort < old_effort:
             logging.info('effort decreased (%d -> %d), game ended',
-                          old_state.total_effort, state.total_effort)
+                          old_effort, state.total_effort)
             return
         old_effort = state.total_effort
         used_piece = False
