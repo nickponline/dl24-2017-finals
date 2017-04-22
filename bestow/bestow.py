@@ -11,7 +11,7 @@ from enum import Enum
 import numpy as np
 import dl24.client
 from dl24.client import command, ProtocolError, Failure
-from prometheus_client import Counter, Gauge
+from prometheus_client import Counter, Gauge, Histogram
 
 
 class Turn(Enum):
@@ -58,6 +58,7 @@ PLAYER_GAUGES = [Gauge('bestow_player_' + name[0], 'Player value of ' + name[0],
 NUM_PIECES_GAUGE = Gauge('bestow_num_pieces', 'Number of pieces in game')
 BIGGEST_CUBE_GAUGE = Gauge('bestow_biggest_cube', 'Biggest cube in space', labelnames=['player'])
 BIGGEST_POTENTIAL_CUBE_GAUGE = Gauge('bestow_biggest_potential_cube', 'Biggest cube if all single cubes added', labelnames=['player'])
+OPERATION_TIME = Histogram('bestow_operation_time', 'Function call timings', labelnames=['function'])
 
 
 def parse(descr, value):
@@ -257,6 +258,8 @@ def fix_piece(piece):
         piece.upper = np.max(piece.pos, axis=1)
 
 
+OPERATION_TIME_fits2d = OPERATION_TIME.labels('fits2d')
+@OPERATION_TIME_fits2d.time()
 def fits2d(space, piece, out=None):
     N = space.shape[0]
     fix_piece(piece)
@@ -278,6 +281,8 @@ def fits2d(space, piece, out=None):
     return out
 
 
+OPERATION_TIME_prefix_sum = OPERATION_TIME.labels('prefix_sum')
+@OPERATION_TIME_prefix_sum.time()
 def prefix_sum(space):
     N = space.shape[0]
     out = np.zeros((N + 1, N + 1, N + 1), dtype=np.int32)
@@ -298,6 +303,8 @@ def rectoid_sum(prefixes, lower, upper):
             - prefixes[lower[2], lower[1], lower[0]]
 
 
+OPERATION_TIME_fits3d = OPERATION_TIME.labels('fits3d')
+@OPERATION_TIME_fits3d.time()
 def fits3d(space, prefix, piece, out=None):
     N = space.shape[0]
     fix_piece(piece)
@@ -325,8 +332,11 @@ def fits3d(space, prefix, piece, out=None):
     return out
 
 
-def _biggest_cube(space, planes):
+OPERATION_TIME_biggest_cube = OPERATION_TIME.labels('biggest_cube')
+@OPERATION_TIME_biggest_cube.time()
+def biggest_cube(space):
     N = space.shape[0]
+    planes = np.zeros((2, N + 1, N + 1), np.int32)
     ans = 0
     cur = 0
     nxt = 1
@@ -361,12 +371,6 @@ def best_singles3d(space, singles):
                         best = x, y, z, s
         if best[-1] != s:
             return best
-
-
-def biggest_cube(space):
-    N = space.shape[0]
-    planes = np.zeros((2, N + 1, N + 1), np.int32)
-    return _biggest_cube(space, planes)
 
 
 def place2d(space, piece, x, y):
