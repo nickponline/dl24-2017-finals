@@ -226,6 +226,10 @@ class Client(dl24.client.ClientBase):
     async def place_own_piece(self, x, y, z, rx, ry, rz):
         pass
 
+    @command('PLACE_SINGLE_CUBE_PIECE')
+    async def place_single_cube_piece(self, x, y, z):
+        pass
+
 
 @numba.jit(nopython=True)
 def fits2d(space, pos, x, y):
@@ -278,6 +282,22 @@ def _biggest_cube(space, planes):
                 ans = max(ans, top)
         cur, nxt = nxt, cur
     return ans
+
+
+@numba.jit(nopython=True)
+def best_singles3d(space, singles):
+    N = space.shape[0]
+    best = 0, 0, 0, 0
+    for s in range(1, N + 2):
+        need = s * s * s
+        for z in range(N - s + 1):
+            for y in range(N - s + 1):
+                for x in range(N - s + 1):
+                    have = np.sum(space[z : z + s, y : y + s, x : x + s])
+                    if have + singles >= need:
+                        best = x, y, z, s
+        if best[-1] != s:
+            return best
 
 
 def biggest_cube(space):
@@ -353,6 +373,7 @@ async def play_game(shelf, client):
             shared = await client.get_shared_space()
             own = await client.get_my_space()
             biggest = biggest_cube(own)
+            print(best_singles3d(own, state.me.single_cube))
             BIGGEST_CUBE_GAUGE.labels('me').set(biggest)
             avail_idx = await client.get_pieces_in_range()
             avail = [pieces[idx] for idx in avail_idx]
@@ -417,6 +438,25 @@ async def play_game(shelf, client):
                     if best > 0:
                         await client.set_multiplier(best, multiplier)
                         state.me.multipliers[best] = multiplier
+                logging.info('Game ending, setting single cubes')
+                x, y, z, size = best_singles3d(own, state.me.single_cube)
+                try:
+                    for dz in range(size):
+                        for dy in range(size):
+                            for dx in range(size):
+                                px = x + dx
+                                py = y + dy
+                                pz = z + dz
+                                if own[pz, py, px] == 0:
+                                    await client.place_single_cube_piece(px, py, pz)
+                                    own[pz, py, px] = 1
+                except Failure as error:
+                    if error.errno != 6:
+                        raise
+                    else:
+                        logging.warn('Could not complete cube due to command limit')
+                biggest = biggest_cube(own)
+                BIGGEST_CUBE_GAUGE.labels('me').set(biggest)
 
 
 async def main():
