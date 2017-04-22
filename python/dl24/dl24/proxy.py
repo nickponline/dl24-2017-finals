@@ -7,6 +7,7 @@ import sys
 import datetime
 import enum
 import json
+import socket
 from . import client as _client
 
 
@@ -84,6 +85,9 @@ class Client(object):
         return await self.reader.readline()
 
     async def run(self, proxy):
+        self.writer.get_extra_info('socket').setsockopt(socket.IPPROTO_TCP,
+                                                        socket.TCP_NODELAY,
+                                                        1)
         peer = self.writer.get_extra_info('peername')
         if proxy.clients:
             existing = next(iter(proxy.clients))

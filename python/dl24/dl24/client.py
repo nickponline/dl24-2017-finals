@@ -4,6 +4,7 @@ import functools
 import inspect
 import re
 import os
+import socket
 import prometheus_client
 
 
@@ -149,6 +150,9 @@ class ClientBase(object):
         """Asynchronously create a client and connect it to the server."""
         self.reader, self.writer = await asyncio.open_connection(
             self.host, self.port, limit=2**20)
+        self.writer.get_extra_info('socket').setsockopt(socket.IPPROTO_TCP,
+                                                        socket.TCP_NODELAY,
+                                                        1)
         # Do the login protocol
         prompt = await self.readline(expected=re.compile('LOGIN|PROXY-NOLOGIN'), parse_failed=True)
         if prompt == 'LOGIN':
