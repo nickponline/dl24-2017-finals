@@ -277,9 +277,6 @@ async def play_game(shelf, client):
         old_state = state
         state = await client.get_match_info()
         if state.total_effort < old_state.total_effort:
-            used = sum(state.me.multipliers)
-            if used < 9:
-                logging.warn('not all multipliers used (%d)', used)
             logging.info('effort decreased (%d -> %d), game ended',
                           old_state.total_effort, state.total_effort)
             return
