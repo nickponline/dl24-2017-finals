@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import logging
 import shelve
+import math
 from enum import Enum
 import numpy as np
 import dl24.client
@@ -231,6 +232,8 @@ def color_scores(space, world):
     N = space.shape[0]
     scores = [0.0] * (world.colors + 1)
     st = []
+    dx = [-1, 0, 1, 0]
+    dy = [0, -1, 0, 1]
     for y in range(N):
         for x in range(N):
             color = space[y, x]
@@ -243,10 +246,10 @@ def color_scores(space, world):
                     for i in range(4):
                         x2 = x + dx[i]
                         y2 = y + dy[i]
-                        if space[y2, x2] == color:
+                        if x2 >= 0 and x2 < N and y2 >= 0 and y2 < N and space[y2, x2] == color:
                             space[y2, x2] = 0
                             size += 1
-                            st.push((x2, y2))
+                            st.append((x2, y2))
                 scores[color] += math.pow(float(size), world.shared_exponent)
     return scores
 
@@ -302,6 +305,7 @@ async def play_game(shelf, client):
                 state.me.effort += avail[i].effort
             else:
                 state.me.effort = state.you.effort + 1
+            logging.info(color_scores(shared, world))
             if state.me.effort >= world.effort_end:
                 # Game is about to end, figure out multipliers to use
                 logging.info('Game ending, setting multipliers')
@@ -318,7 +322,8 @@ async def play_game(shelf, client):
                             best_score = cscores[i]
                             best = i
                     if best > 0:
-                        await self.set_multiplier(best, multiplier)
+                        await client.set_multiplier(best, multiplier)
+                        state.me.multipliers[best] = multiplier
 
 
 async def main():
