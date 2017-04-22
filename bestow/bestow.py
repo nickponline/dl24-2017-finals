@@ -6,6 +6,7 @@ import logging
 import shelve
 import math
 import gc
+import copy
 from collections import namedtuple
 from enum import Enum
 import numpy as np
@@ -60,6 +61,19 @@ BIGGEST_CUBE_GAUGE = Gauge('bestow_biggest_cube', 'Biggest cube in space', label
 BIGGEST_POTENTIAL_CUBE_GAUGE = Gauge('bestow_biggest_potential_cube', 'Biggest cube if all single cubes added', labelnames=['player'])
 OPERATION_TIME = Histogram('bestow_operation_time', 'Function call timings', labelnames=['function'])
 _do_assertions = False
+
+ROTATE_X = np.array(
+    [[1, 0, 0],
+     [0, 0, -1],
+     [0, 1, 0]], dtype=np.int8)
+ROTATE_Y = np.array(
+    [[0, 0, 1],
+     [0, 1, 0],
+     [-1, 0, 0]], dtype=np.int8)
+ROTATE_Z = np.array(
+    [[0, -1, 0],
+     [1, 0, 0],
+     [0, 0, 1]])
 
 
 def parse(descr, value):
@@ -120,6 +134,38 @@ class MatchInfo(object):
         return self.me.effort + self.you.effort
 
 
+class Orientation(object):
+    def __init__(self, xs, ys, zs):
+        mat = np.identity(3, np.int8)
+        for i in range(xs):
+            mat = ROTATE_X @ mat
+        for i in range(ys):
+            mat = ROTATE_Y @ mat
+        for i in range(zs):
+            mat = ROTATE_Z @ mat
+        self.xs = xs
+        self.ys = ys
+        self.zs = zs
+        self.mat = mat
+
+    def __call__(self, piece):
+        piece2 = copy.copy(piece)
+        piece2.pos = self.mat @ piece.pos
+        if hasattr(piece2, 'lower'):
+            delattr(piece2, 'lower')
+            delattr(piece2, 'upper')
+        return piece2
+
+
+ORIENTATIONS = []
+for xs in range(4):
+    for ys in range(4):
+        for zs in range(4):
+            orient = Orientation(xs, ys, zs)
+            if not any(np.all(orient.mat == existing.mat) for existing in ORIENTATIONS):
+                ORIENTATIONS.append(orient)
+
+
 def check_iterator_done(it, line):
     try:
         next(it)
@@ -169,7 +215,7 @@ class Piece2D(object):
         self.pos = np.array(pos, dtype=np.int8).transpose()
 
 
-Placement = namedtuple('Placement', ['idx', 'own_pos', 'shared_pos', 'value'])
+Placement = namedtuple('Placement', ['idx', 'own_pos', 'own_orient', 'shared_pos', 'value'])
 
 
 class Client(dl24.client.ClientBase):
@@ -479,16 +525,23 @@ async def play_game(shelf, client):
                 if avail[i].price > state.me.budget:
                     continue
                 own_pos = None
+                own_orient = None
                 shared_pos = None
                 own_value = avail[i].value
                 loss = max(0, avail[i].price - cash)
-                fitness = fits3d(own, prefix, avail[i])
-                hits = np.max(fitness)
-                if hits >= 0:
-                    own_pos_flat = np.argmax(fitness)
-                    own_pos = [own_pos_flat % world.size_own,
-                               own_pos_flat // world.size_own % world.size_own,
-                               own_pos_flat // world.size_own**2]
+
+                best_hits = -1
+                for orient in ORIENTATIONS:
+                    piece = orient(avail[i])
+                    fitness = fits3d(own, prefix, piece)
+                    hits = np.max(fitness)
+                    if hits > best_hits:
+                        own_pos_flat = np.argmax(fitness)
+                        own_pos = [own_pos_flat % world.size_own,
+                                   own_pos_flat // world.size_own % world.size_own,
+                                   own_pos_flat // world.size_own**2]
+                        own_orient = orient
+                        best_hits = hits
 
                 collide = fits2d(shared, avail2d[i])
                 good_y, good_x = collide.nonzero()
@@ -499,25 +552,27 @@ async def play_game(shelf, client):
                     value = -loss
                     ### Testing
                     if _do_assertions:
-                        start = avail[i].lower + own_pos
-                        stop = avail[i].upper + own_pos + 1
+                        piece = own_orient(avail[i])
+                        fix_piece(piece)
+                        start = piece.lower + own_pos
+                        stop = piece.upper + own_pos + 1
                         test_hits = np.sum(own[start[2]:stop[2], start[1]:stop[1], start[0]:stop[0]])
-                        test_hits2 = rectoid_sum(prefix, start, stop)
-                        assert_equal(test_hits, test_hits2, 'test_hits')
-                        assert_equal(test_hits, hits, 'hits')
+                        assert_equal(test_hits, best_hits, 'hits')
                     ### End testing
-                    q = hits - world.quality_min
+                    q = best_hits - world.quality_min
                     scaling = world.good_bonus if q > 0 else world.bad_penalty
                     own_value = int(own_value * (1 + scaling * q))
                     value += own_value
                     if value > 0:
                         if best is None or value > best.value:
-                            best = Placement(i, own_pos=own_pos, shared_pos=shared_pos, value=value)
+                            best = Placement(i, own_pos=own_pos, own_orient=own_orient, shared_pos=shared_pos, value=value)
             logging.info('Done evaluating pieces')
             if best is not None:
                 await client.buy_piece(best.idx + 1)
                 if best.own_pos:
-                    await client.place_own_piece(*best.own_pos, 0, 0, 0)
+                    await client.place_own_piece(
+                        *best.own_pos,
+                        best.own_orient.xs, best.own_orient.ys, best.own_orient.zs)
                     state.me.profit_own += best.value
                 if best.shared_pos:
                     await client.place_shared_piece(*best.shared_pos, 0, 0, 0)
