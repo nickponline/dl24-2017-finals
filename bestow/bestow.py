@@ -424,6 +424,8 @@ def biggest_cube(space):
     return ans
 
 
+OPERATION_TIME_best_singles3d = OPERATION_TIME.labels('best_singles3d')
+@OPERATION_TIME_best_singles3d.time()
 def best_singles3d(space, prefix, singles):
     N = space.shape[0]
     best = 0, 0, 0, 0
