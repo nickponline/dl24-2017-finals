@@ -215,7 +215,7 @@ class Piece2D(object):
         self.pos = np.array(pos, dtype=np.int8).transpose()
 
 
-Placement = namedtuple('Placement', ['idx', 'own_pos', 'own_orient', 'shared_pos', 'value'])
+Placement = namedtuple('Placement', ['idx', 'own_pos', 'own_orient', 'shared_pos', 'value', 'metric'])
 
 
 class Client(dl24.client.ClientBase):
@@ -563,9 +563,12 @@ async def play_game(shelf, client):
                     scaling = world.good_bonus if q > 0 else world.bad_penalty
                     own_value = int(own_value * (1 + scaling * q))
                     value += own_value
+                    metric = value / avail[i].effort
                     if value > 0:
-                        if best is None or value > best.value:
-                            best = Placement(i, own_pos=own_pos, own_orient=own_orient, shared_pos=shared_pos, value=value)
+                        if best is None or metric > best.metric:
+                            best = Placement(i, own_pos=own_pos, own_orient=own_orient,
+                                             shared_pos=shared_pos, value=value,
+                                             metric=metric)
             logging.info('Done evaluating pieces')
             if best is not None:
                 await client.buy_piece(best.idx + 1)
