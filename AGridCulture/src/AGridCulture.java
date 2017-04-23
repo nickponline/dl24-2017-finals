@@ -64,6 +64,7 @@ public class AGridCulture
         Worker cooperator;
         boolean cooperative;
         boolean primaryCoop;
+        int hiveX = -1, hiveY = -1;
         
         Worker(int id, int x, int y)
         {
@@ -244,6 +245,12 @@ public class AGridCulture
         {
             nextX = x;
             nextY = y;
+            
+            if ((turns % 200) == 0) {
+                // Move to a new location to spice things up & stop traps from developing.
+                txl = -1;
+                lastTx = -1;
+            }
             
             //if ((!cooperative || primaryCoop) && 
             if (cooperator == null && txl < MIN) {
@@ -617,15 +624,21 @@ public class AGridCulture
     private boolean[][] harvestPost;
     private boolean[][] scored;
     private int[][] evilDist;
+    private int[][] workerDist;
+    private int[][][] bigSquare;
+    private int[][][] bigSquareW;
+    private int turns;
+    private int hiveX, hiveY, hiveL;
     
     private List<Worker> workers = new ArrayList<>();
     private List<EnemyWorker> enemyWorkers = new ArrayList<>();
     
+    int index;
     public AGridCulture(Client client, int index)
         throws Exception
     {
         this.client = client;
-        
+        this.index = index;
         specialWriter = new PrintWriter(new FileWriter("/Users/carl/contests/deadline24/2017/final/special." + index));
         
         // Run some basic tests on harvesting.
@@ -959,6 +972,9 @@ public class AGridCulture
                 harvestPost = new boolean[A][A];
                 scored = new boolean[A][A];
                 evilDist = new int[A][A];
+                workerDist = new int[A][A];
+                bigSquare = new int[A][A][A];
+                bigSquareW = new int[A][A][A];
                 client.readLine(); // map size
                 for (int i = 0; i < A; i++) {
                     String line = client.readLine();
@@ -1027,6 +1043,8 @@ public class AGridCulture
                     // Once we have completed the game then we go around again. We determine game-end
                     // by U changing by more than we expect.
                     if (lastU != -1 && U != lastU - 1) {
+                        turns = 0;
+                        hiveX = hiveY = hiveL = -1;
                         break;
                     }
                     else {
@@ -1060,17 +1078,7 @@ public class AGridCulture
                         nWorkers[worker.x][worker.y]++;
                     }
                     
-                    // Place any markers where we are ready to do so.
-                    placeMarkers();
-                    
-                    // Score any areas that are ready to go.
-                    scoreAreas();
-                    
-                    // Move our workers.
-                    moveWorkers();
-
-                    // See if our workers should drop or destroy any markers.
-                    dropDestroyMarkers();
+                    runStrategy();
 
                     // Update the distance cache for workers that have moved.
                     for (int i = 0; i < workers.size(); i++) {
@@ -1111,11 +1119,20 @@ public class AGridCulture
                     for (int i = 0; i < Sc; i++) {
                         int x = sc.nextInt();
                         int y = sc.nextInt();
-                        harvests[i] = getHarvest(x, y);
+                        try {
+                            harvests[i] = getHarvest(x, y);
+                        }
+                        catch (ProtocolException e) {
+                            // Ignore failure to harvest errors!
+                            //
+                            // XXX
+                            harvests[i] = null;
+                        }
                     }
                     
                     for (int i = 0; i < Sc; i++) {
                         Harvest harvest = harvests[i];
+                        if (harvest == null) continue;
                         for (int j = 0; j < harvest.perimeterX.length; j++) {
                             int hx = harvest.perimeterX[j];
                             int hy = harvest.perimeterY[j];
@@ -1156,12 +1173,453 @@ public class AGridCulture
                             }
                         }
                     }
+                    
+                    turns++;
                 }
             }
         }
         catch (Exception e) {
             throw e;
         }
+    }
+    
+    void runStrategy()
+        throws Exception
+    {
+        if (index == -1) {
+            runHeroStrategy();
+        }
+        else {
+            runHiveMindStrategy();
+        }
+    }
+    
+    void runHiveMindStrategy()
+        throws Exception
+    {
+        if (hiveX == -1 || (turns % 1000) == 0) {
+            determineHivemindLocation();
+        }
+        
+        // Execute claim operations.
+        for (int i = 0; i < workers.size(); i++) {
+            Worker w = workers.get(i);
+            final char ch = map[w.x][w.y];
+            if (w.hiveX != -1 && w.x == w.hiveX && w.y == w.hiveY) {
+                _assert(ch != C);
+                if (nWorkers[w.hiveX][w.hiveY] == 1 && canExecuteCommand()) {
+                    // We're the only worker and so can go ahead with claiming this spot. 
+                    if (ch == '.') {
+                        // Easy.
+                        client.writeCommand("PUT", w.id, C);
+                        map[w.x][w.y] = C;
+                        markerExpiry[w.x][w.y] = F;
+                    }
+                    else if (w.numStored < G) {
+                        client.writeCommand("PUT", w.id, C);
+                        w.addToStorage(ch);
+                        map[w.x][w.y] = C;
+                        markerExpiry[w.x][w.y] = F;
+                    }
+                }
+            }
+            else if (ch == '.' && w.numStored > 0 && canExecuteCommand() && nWorkers[w.x][w.y] == 1) {
+                // Prepare to dump. Make sure that this point is not inside our hive!
+                int distX = w.x - hiveX;
+                int distY = w.y - hiveY;
+                if (distX < 0) distX += A;
+                if (distY < 0) distY += A;
+                if (distX >= hiveL && distY >= hiveL) {
+                    // Dump something random from our storage.
+                    int index = random.nextInt(w.numStored);
+                    char dump = w.storage[index];
+                    client.writeCommand("PUT", w.id, dump);
+                    w.numStored--;
+                    w.storage[index] = w.storage[w.numStored];
+                }
+            }
+        }
+        
+        // Clear each worker's previous state about where it's going, if the cell is now occupied by us
+        // (or by an opponent's POST and we do not have capacity to replace it).
+        for (int i = 0; i < workers.size(); i++) {
+            Worker w = workers.get(i);
+            if (w.hiveX != -1 && (map[w.hiveX][w.hiveY] == C || (map[w.hiveX][w.hiveY] != '.' && w.numStored >= G))) {
+                w.hiveX = w.hiveY = -1;
+            }
+            w.allocatedToMove = false;
+        }
+
+        // Make a note of the hive cells that are already claimed by a worker.
+        for (int i = 0; i < A; i++) {
+            Arrays.fill(claimedForMove[i], false);
+        }
+        for (int i = 0; i < workers.size(); i++) {
+            Worker w = workers.get(i);
+            if (w.hiveX != -1) {
+                claimedForMove[w.hiveX][w.hiveY] = true;
+            }
+        }
+        
+        // For each worker that does not currently have a goal, assign it one.
+        for (int i = 0; i < workers.size(); i++) {
+            Worker w = workers.get(i);
+            if (w.hiveX == -1) {
+                // See if there is a part of our hive which we can mark -- find the one closest to us.
+                int best = -1, bestX = -1, bestY = -1;
+                for (int x = 0; x < hiveL && w.hiveX == -1; x++) {
+                    for (int y = 0; y < hiveL && w.hiveX == -1; y++) {
+                        int nx = wrap(hiveX + x);
+                        int ny = wrap(hiveY + y);
+                        if (!claimedForMove[nx][ny] && (map[nx][ny] == '.' || (map[nx][ny] != C && w.numStored < G))) {
+                            int d = w.distance[nx][ny];
+                            if (best < 0 || d < best || (d == best && random.nextBoolean())) {
+                                best = d;
+                                bestX = nx;
+                                bestY = ny;
+                            }
+                        }
+                    }
+                }
+                if (best >= 0) {
+                    w.hiveX = bestX;
+                    w.hiveY = bestY;
+                    claimedForMove[bestX][bestY] = true;
+                }
+            }
+            if (w.hiveX == -1 && w.numStored >= G) {
+                // Find the closest blank square that we can dump onto.
+                for (int j = 0; j < A; j++) {
+                    Arrays.fill(scored[j], false);
+                }
+                int qt = 0;
+                int qh = 1;
+                qx[0] = w.x;
+                qy[0] = w.y;
+                scored[w.x][w.y] = true;
+                while (qt < qh) {
+                    int curx = qx[qt];
+                    int cury = qy[qt];
+                    if (map[curx][cury] == '.' && !claimedForMove[curx][cury]) {
+                        break;
+                    }
+                    qt++;
+                    for (int c = 0; c < 4; c++) {
+                        int nx = curx + CX[c];
+                        int ny = cury + CY[c];
+                        if (nx < 0) nx += A;
+                        if (nx >= A) nx -= A;
+                        if (ny < 0) ny += A;
+                        if (ny >= A) ny -= A;
+                        if (!scored[nx][ny]) {
+                            qx[qh] = nx;
+                            qy[qh] = ny;
+                            scored[nx][ny] = true;
+                            qh++;
+                        }
+                    }
+                }
+                
+                // Move towards the empty cell.
+                int tx = qx[qt];
+                int ty = qy[qt];
+                if ((tx != w.x || ty != w.y) && canExecuteCommand()) {
+                    specialWriter.println("Worker " + w.id + " at " + w.x + " " + w.y + " moving towards empty cell " + tx + " " + ty + " to dump");
+                    int dx = w.dirX[tx][ty];
+                    int dy = w.dirY[tx][ty];
+                    client.writeCommand("MOVE", w.id, dx, dy);
+                    w.nextX = w.x + dx;
+                    w.nextY = w.y + dy;
+                    w.allocatedToMove = true;
+                    claimedForMove[tx][ty] = true;
+                }
+            }
+        }
+        
+        // Now execute moves.
+        for (int i = 0; i < workers.size(); i++) {
+            Worker w = workers.get(i);
+            if (canExecuteCommand()) {
+                if (w.hiveX != -1 && (w.x != w.hiveX || w.y != w.hiveY)) {
+                    // Move this worker towards the hive.
+                    int dx = w.dirX[w.hiveX][w.hiveY];
+                    int dy = w.dirY[w.hiveX][w.hiveY];
+                    try {
+                        client.writeCommand("MOVE", w.id, dx, dy);
+                    }
+                    catch (ProtocolException e) {
+                        throw e;
+                    }
+                    w.nextX = wrap(w.x + dx);
+                    w.nextY = wrap(w.y + dy);
+                    w.allocatedToMove = true;
+                }
+                else if (w.hiveX == -1 && !w.allocatedToMove) {
+                    // Get out of dodge.
+                    for (int j = -1; j <= hiveL && !w.allocatedToMove; j++) {
+                        for (int k = 0; k < 4 && !w.allocatedToMove; k++) {
+                            int nx = -1, ny = -1;
+                            switch (k) {
+                            case 0: nx = hiveX - 1; ny = hiveY + j; break;
+                            case 1: nx = hiveX + hiveL; ny = hiveY + j; break;
+                            case 2: nx = hiveX + j; ny = hiveY - 1; break;
+                            case 3: nx = hiveX + j; ny = hiveY + hiveL; break;
+                            }
+                            nx = wrap(nx);
+                            ny = wrap(ny);
+                            if (map[nx][ny] != '#' || B) {
+                                if (w.x != nx || w.y != ny) {
+                                    int dx = w.dirX[nx][ny];
+                                    int dy = w.dirY[nx][ny];
+                                    specialWriter.println("Worker " + w.id + " at " + w.x + " " + w.y + " aiming for " + nx + " " + ny + " to get out");
+                                    client.writeCommand("MOVE", w.id, dx, dy);
+                                    w.nextX = wrap(w.x + dx);
+                                    w.nextY = wrap(w.y + dy);
+                                    w.allocatedToMove = true;
+                                }
+                                else {
+                                    w.allocatedToMove = true;
+                                    w.nextX = w.x;
+                                    w.nextY = w.y;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Finally, do scoring. We score the area when the total area consumed is equal to the area of the hive
+        // minus the number of enemy workers in our hive space.
+        List<Area> areas = getAreasToScore();
+        int totalScore = 0;
+        for (int i = 0; i < areas.size(); i++) {
+            totalScore += areas.get(i).x.length;
+        }
+        int expectedScore = (hiveL - 1) * (hiveL - 1);
+        int enemies = 0;
+        for (EnemyWorker worker : enemyWorkers) {
+            int distX = worker.x - hiveX;
+            int distY = worker.y - hiveY;
+            if (distX < 0) distX += A;
+            if (distY < 0) distY += A;
+            if (distX < hiveL || distY < hiveL) {
+                enemies++;
+            }
+        }
+        expectedScore -= enemies / 4;
+        
+        // If none of our workers have spare storage and if they're all idle, then score.
+        boolean force = true;
+        for (int i = 0; i < workers.size(); i++) {
+            Worker w = workers.get(i);
+            if (w.hiveX != -1 || w.numStored < G) {
+                force = false;
+            }
+        }
+        if (force || totalScore >= expectedScore || F < 2) {
+            // Hit it!
+            for (Area area : areas) {
+                if (canExecuteCommand()) {
+                    client.writeCommand("SCORE", area.sx, area.sy);
+                }
+            }
+        }
+        else {
+            specialWriter.println("Total score was " + totalScore + " but we expected at least " + expectedScore + " to hit");
+        }
+        
+        // Last of all, to aid with debugging we dump the state of the hive and the distance of our workers from
+        // their targets.
+        for (int i = -1; i <= hiveL; i++) {
+            for (int j = -1; j <= hiveL; j++) {
+                int x = wrap(hiveX + i);
+                int y = wrap(hiveY + j);
+                specialWriter.print(map[x][y]);
+                boolean hasWorker = false;
+                for (Worker w : workers) {
+                    if (w.x == x && w.y == y) {
+                        hasWorker = true;
+                        specialWriter.print('*');
+                        break;
+                    }
+                }
+                if (!hasWorker) {
+                    specialWriter.print(' ');
+                }
+            }
+            specialWriter.println();
+        }
+        for (Worker w : workers) {
+            if (w.hiveX != -1) {
+                specialWriter.println("Worker " + w.id + " at " + w.x + " " + w.y + " aiming for " + w.hiveX + " " + w.hiveY);
+            }
+        }
+        specialWriter.flush();
+    }
+
+    void determineHivemindLocation()
+    {
+        // Determine the distance of each grid point from the enemies.
+        System.err.println("Computing distance of all grid points from enemies");
+        int qt = 0;
+        int qh = 0;
+        for (int i = 0; i < A; i++) {
+            Arrays.fill(evilDist[i], -1);
+        }
+        for (int i = 0; i < enemyWorkers.size(); i++) {
+            int ex = enemyWorkers.get(i).x;
+            int ey = enemyWorkers.get(i).y;
+            if (evilDist[ex][ey] < 0) {
+                qx[qh] = ex;
+                qy[qh] = ey;
+                evilDist[ex][ey] = 0;
+                qh++;
+            }
+        }
+        while (qt < qh) {
+            int curx = qx[qt];
+            int cury = qy[qt];
+            qt++;
+            for (int c = 0; c < 4; c++) {
+                int nx = curx + CX[c];
+                int ny = cury + CY[c];
+                if (nx < 0) nx += A;
+                if (nx >= A) nx -= A;
+                if (ny < 0) ny += A;
+                if (ny >= A) ny -= A;
+                if (evilDist[nx][ny] < 0) {
+                    evilDist[nx][ny] = evilDist[curx][cury] + 1;
+                    qx[qh] = nx;
+                    qy[qh] = ny;
+                    qh++;
+                }
+            }
+        }
+        
+        // And do the same for our workers.
+        qt = 0;
+        qh = 0;
+        for (int i = 0; i < A; i++) {
+            Arrays.fill(workerDist[i], -1);
+        }
+        for (int i = 0; i < workers.size(); i++) {
+            int ex = workers.get(i).x;
+            int ey = workers.get(i).y;
+            if (workerDist[ex][ey] < 0) {
+                qx[qh] = ex;
+                qy[qh] = ey;
+                workerDist[ex][ey] = 0;
+                qh++;
+            }
+        }
+        while (qt < qh) {
+            int curx = qx[qt];
+            int cury = qy[qt];
+            qt++;
+            for (int c = 0; c < 4; c++) {
+                int nx = curx + CX[c];
+                int ny = cury + CY[c];
+                if (nx < 0) nx += A;
+                if (nx >= A) nx -= A;
+                if (ny < 0) ny += A;
+                if (ny >= A) ny -= A;
+                if (workerDist[nx][ny] < 0) {
+                    workerDist[nx][ny] = workerDist[curx][cury] + 1;
+                    qx[qh] = nx;
+                    qy[qh] = ny;
+                    qh++;
+                }
+            }
+        }
+        
+        // Determine the average distance from evil for all squares that can be formed in the grid.
+        double best = -1;
+        int bestX = -1, bestY = -1, bestSize = -1;
+        System.err.println("Determining best grid location & square size");
+        for (int size = 0; size < A; size++) {
+            int num = (size + 1) * (size + 1);
+            for (int i = 0; i < A; i++) {
+                for (int j = 0; j < A; j++) {
+                    if (map[i][j] == '#') {
+                        bigSquare[i][j][size] = -1;
+                        bigSquareW[i][j][size] = -1;
+                    }
+                    else if (size == 0) {
+                        bigSquare[i][j][size] = evilDist[i][j];
+                        bigSquareW[i][j][size] = workerDist[i][j];
+                    }
+                    else {
+                        int left = i - 1;
+                        if (left < 0) left += A;
+                        int up = j - 1;
+                        if (up < 0) up += A;
+                        int cornerX = i - size;
+                        if (cornerX < 0) cornerX += A;
+                        int cornerY = j - size;
+                        if (cornerY < 0) cornerY += A;
+                        if (bigSquare[left][j][size - 1] == -1 || bigSquare[i][up][size - 1] == -1 || bigSquare[cornerX][cornerY][0] == -1) {
+                            bigSquare[i][j][size] = -1;
+                            bigSquareW[i][j][size] = -1;
+                        }
+                        else {
+                            int result = bigSquare[left][j][size - 1] + bigSquare[i][up][size - 1] + bigSquare[cornerX][cornerY][0];
+                            int resultW = bigSquareW[left][j][size - 1] + bigSquareW[i][up][size - 1] + bigSquareW[cornerX][cornerY][0];
+                            if (size > 1) {
+                                result -= bigSquare[left][up][size - 2];
+                                resultW -= bigSquareW[left][up][size - 2];
+                            }
+                            bigSquare[i][j][size] = result;
+                            bigSquareW[i][j][size] = resultW;
+                            
+                            double averageDistanceFromEvil = ((double) result) / ((double) num);
+                            //double averageDistanceFromWorkers = ((double) result) / ((double) num);
+                            double averageDistanceFromWorkers = 0;
+                            for (int w = 0; w < workers.size(); w++) {
+                                Worker W = workers.get(w);
+                                int distX = W.x - (i - size / 2);
+                                int distY = W.y - (j - size / 2);
+                                if (distX < 0) distX += A;
+                                if (distX >= A) distX -= A;
+                                if (distY < 0) distY += A;
+                                if (distY >= A) distY -= A;
+                                averageDistanceFromWorkers += distX + distY;
+                            }
+                            averageDistanceFromWorkers /= workers.size();
+                            if (averageDistanceFromEvil > size / 2.0 && (best < 0 || size > bestSize || averageDistanceFromWorkers < best)) {
+                                best = averageDistanceFromWorkers;
+                                bestSize = size;
+                                bestX = i;
+                                bestY = j;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+                
+        _assert(best > 0);
+        
+        hiveX = bestX - bestSize;
+        hiveY = bestY - bestSize;
+        hiveL = bestSize + 1;
+        System.err.println("Hive determined as " + hiveX + " " + hiveY + " " + hiveL + " with distance from enemies of " + best);
+    }
+
+    void runHeroStrategy()
+        throws Exception
+    {
+        // Place any markers where we are ready to do so.
+        placeMarkers();
+        
+        // Score any areas that are ready to go.
+        scoreAreas();
+        
+        // Move our workers.
+        moveWorkers();
+
+        // See if our workers should drop or destroy any markers.
+        dropDestroyMarkers();
     }
     
     static class Harvest
@@ -1772,7 +2230,7 @@ public class AGridCulture
                     culture.run();
                 }
                 catch (Exception e) {
-                    if (!e.getMessage().contains("Failed harvest at blank cell")) {
+                    if (e.getMessage() == null || !e.getMessage().contains("Failed harvest at blank cell")) {
                         client.stop();
                         throw new RuntimeException(e);
                     }
