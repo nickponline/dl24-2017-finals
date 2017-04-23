@@ -424,26 +424,33 @@ def biggest_cube(space):
     return ans
 
 
-def best_singles3d(space, singles):
+def best_singles3d(space, prefix, singles):
     N = space.shape[0]
     best = 0, 0, 0, 0
     for s in range(1, N + 2):
-        need = s * s * s
-        for z in range(N - s + 1):
-            for y in range(N - s + 1):
-                for x in range(N - s + 1):
-                    have = np.sum(space[z : z + s, y : y + s, x : x + s])
-                    if have + singles >= need:
-                        best = x, y, z, s
+        need = s**3
+        boxes = np.zeros((N - s + 1,) * 3, np.int32)
+        for dz in (0, s):
+            for dy in (0, s):
+                for dx in (0, s):
+                    sign = 1
+                    if not dz: sign *= -1
+                    if not dy: sign *= -1
+                    if not dx: sign *= -1
+                    boxes[:] += prefix[dz:dz+N-s+1, dy:dy+N-s+1, dx:dx+N-s+1] * sign
+        good_z, good_y, good_x = np.nonzero(boxes >= need - singles)
+        if len(good_z):
+            best = good_x[0], good_y[0], good_z[0], s
         if best[-1] != s:
             return best
 
 
-def place3d(space, piece, x, y, z):
+def place3d(space, prefix, piece, x, y, z):
     offset = np.array([[x], [y], [z]], dtype=np.int8)
     pos = piece.pos + offset
     for i in range(pos.shape[1]):
         space[pos[2, i], pos[1, i], pos[0, i]] = 1
+        prefix[pos[2, i] + 1:, pos[1, i] + 1:, pos[0, i] + 1:] += 1
 
 
 def place2d(space, piece, x, y):
@@ -650,7 +657,7 @@ async def play_game(shelf, client, window):
             logging.debug('Got prefix sum')
             opponent = await client.get_opponent_space()
             biggest = biggest_cube(own)
-            biggest_possible = best_singles3d(own, state.me.single_cube)[-1]
+            biggest_possible = best_singles3d(own, prefix, state.me.single_cube)[-1]
             BIGGEST_CUBE_GAUGE.labels('me').set(biggest)
             BIGGEST_POTENTIAL_CUBE_GAUGE.labels('me').set(biggest_possible)
             BIGGEST_CUBE_GAUGE.labels('you').set(biggest_cube(opponent))
@@ -741,7 +748,7 @@ async def play_game(shelf, client, window):
                         best.own_orient.xs, best.own_orient.ys, best.own_orient.zs)
                     state.me.profit_own += best.value
                     piece = best.own_orient(avail[best.idx])
-                    place3d(own, piece, *best.own_pos)
+                    place3d(own, prefix, piece, *best.own_pos)
                 if best.shared_pos:
                     await client.place_shared_piece(
                         *best.shared_pos,
@@ -774,7 +781,7 @@ async def play_game(shelf, client, window):
             if state.me.effort >= world.effort_end:
                 # Game is about to end, figure out multipliers to use
                 logging.info('Game ending, setting single cubes')
-                x, y, z, size = best_singles3d(own, state.me.single_cube)
+                x, y, z, size = best_singles3d(own, prefix, state.me.single_cube)
                 try:
                     for dz in range(size):
                         for dy in range(size):
