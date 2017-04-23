@@ -59,6 +59,8 @@ public class AGridCulture
         boolean special = false;
         int tx1, ty1, tx2, ty2, txl;
         int lastTx, lastTy;
+        int specialInd;
+        int evilCounter;
 
         Worker(int id, int x, int y)
         {
@@ -75,10 +77,25 @@ public class AGridCulture
             storage[numStored++] = color;
         }
         
-        void makeSpecial()
+        void makeSpecial(List<Worker> workers)
         {
             special = true;
             
+            // If our worker is too close to some of our other workers, then move it away to a random location.
+            for (int i = 0; i < workers.size(); i++) {
+                Worker worker = workers.get(i);
+                if (worker.id == id) continue;
+                if (worker.distance[x][y] < 10) {
+                    txl = -1;
+                    do {
+                        lastTx = wrap(x + random.nextInt(10));
+                        lastTy = wrap(y + random.nextInt(10));
+                    } while (map[lastTx][lastTy] == '#' || distance[lastTx][lastTy] < 10);
+                    specialWriter.println("Worker " + id + " relocating to " + lastTx + " " + lastTy + " to get away from " + worker.id + " at " + worker.x + " " + worker.y);
+                    return;
+                }
+            }
+
             // Look around us to determine the biggest square area that we can place markers on.
             int neg = 0, best = -1, bestNeg = -1, bestPos = -1;
             while (true) {
@@ -92,7 +109,10 @@ public class AGridCulture
                     neg--;
                     break;
                 }
-                
+
+                if (neg >= A) {
+                    break;
+                }
                 // Now increment in the positive direction and see how far we can go.
                 int pos = 0;
                 while (true) {
@@ -103,6 +123,9 @@ public class AGridCulture
                         bestPos = pos;
                     }
                     
+                    if (total >= A) {
+                        break;
+                    }
                     pos++;
                     ok = map[wrap(x + pos)][wrap(y + pos)] != '#';
                     for (int i = -neg; i < pos && ok; i++) {
@@ -129,6 +152,9 @@ public class AGridCulture
                     break;
                 }
                 
+                if (neg >= A) {
+                    break;
+                }
                 // Now increment in the positive direction and see how far we can go.
                 int pos = 0;
                 while (true) {
@@ -137,6 +163,10 @@ public class AGridCulture
                         best2 = total;
                         best2Neg = neg;
                         best2Pos = pos;
+                    }
+                    
+                    if (total >= A) {
+                        break;
                     }
                     
                     pos++;
@@ -180,11 +210,13 @@ public class AGridCulture
                 txl = best;
             }
             lastTx = -1; lastTy = -1;
+            specialInd = -1;
+            evilCounter = 0;
         }
 
-        int MAX = 10;
+        int MAX = 7;
         int MIN = 4;
-        void specialMove()
+        void specialMove(List<Worker> workers)
             throws Exception
         {
             nextX = x;
@@ -196,80 +228,145 @@ public class AGridCulture
                     // We already have a target in mind.
                     if (x == lastTx && y == lastTy) {
                         // We've made it! Re-evaluate our options.
-                        makeSpecial();
+                        makeSpecial(workers);
                     }
                     else {
                         // Otherwise, move toward the new target.
                         if (canExecuteCommand()) {
                             specialWriter.println("Moving from " + x + " " + y + " towards new area at " + lastTx + " " + lastTy);
-                            client.writeCommand("MOVE", id, dirX[lastTx][lastTy]);
-                            nextX = x + dirX[lastTx][lastTy];
-                            nextY = y + dirY[lastTx][lastTy];
+                            specialWriter.flush();
+                            client.writeCommand("MOVE", id, dirX[lastTx][lastTy], dirY[lastTx][lastTy]);
+                            nextX = wrap(x + dirX[lastTx][lastTy]);
+                            nextY = wrap(y + dirY[lastTx][lastTy]);
                             specialWriter.println("Next is " + nextX + " " + nextY);
+                            specialWriter.flush();
                         }
                     }
                 }
                 else {
                     // Decide on a new target to find a space for us to make a square.
+                    specialWriter.println("Deciding on new target for special worker " + id);
+                    specialWriter.flush();
                     do {
                         lastTx = wrap(x + random.nextInt(20) - 10);
                         lastTy = wrap(y + random.nextInt(20) - 10);
                     } while (map[lastTx][lastTy] == '#');
+                    specialWriter.println("Targeting " + lastTx + " " + lastTy + " for better pastures");
+                    specialWriter.flush();
                 }
+                return;
             }
             
-            // Find the cell on our square border that is closest to us and which needs to be marked.
+            // Check whether we are besieged by evil forces.
+            boolean evilLurks = false;
+            for (int i = 0; i < enemyWorkers.size(); i++) {
+                EnemyWorker worker = enemyWorkers.get(i);
+                if (distance[worker.x][worker.y] < txl) {
+                    evilLurks = true;
+                    break;
+                }
+            }
+            if (evilLurks) {
+                evilCounter++;
+                if (evilCounter >= 3 * txl) {
+                    // Relocate. Do a flood fill from all enemies to find somewhere that is sufficiently far
+                    // away from them and close to us.
+                    int qt = 0;
+                    int qh = 0;
+                    
+                    
+                }
+            }
+            else {
+                evilCounter--;
+                if (evilCounter < 0) {
+                    evilCounter = 0;
+                }
+            }
+
             int best = -1;
             int bestX = -1, bestY = -1;
-            if (lastTx != -1 && lastTy != -1 && map[lastTx][lastTy] != 'C' && nWorkers[lastTx][lastTy] == 0) {
-                best = distance[lastTx][lastTy];
-                bestX = lastTx;
-                bestY = lastTy;
+            if (specialInd != -1) {
+                // We have an index in our square that we should be targeting, so do that.
+                if (specialInd < txl) {
+                    bestX = wrap(tx1 + specialInd);
+                    bestY = wrap(ty1);
+                }
+                else if (specialInd < 2 * txl) {
+                    bestX = wrap(tx1 + txl);
+                    bestY = wrap(ty1 + specialInd - txl);
+                }
+                else if (specialInd < 3 * txl) {
+                    bestX = wrap(tx1 + 3 * txl - specialInd);
+                    bestY = wrap(ty1 + txl);
+                }
+                else {
+                    bestX = wrap(tx1);
+                    bestY = wrap(ty1 + 4 * txl - specialInd);
+                }
+                if (x == bestX && y == bestY) {
+                    
+                }
+                best = distance[bestX][bestY];
             }
-            for (int i = 0; i <= txl; i++) {
-                int tx = wrap(tx1);
-                int ty = wrap(ty1 + i);
-                char ch = map[tx][ty];
-                if (ch != C && ch != '#' && nWorkers[tx][ty] == 0) {
-                    int d = distance[tx][ty];
-                    if (best == -1 || d < best) {
-                        best = d;
-                        bestX = tx;
-                        bestY = ty;
-                    }
+            else {
+                int bestSpecial = -1;
+                // Find the cell on our square border that is closest to us and which needs to be marked.
+                if (lastTx != -1 && lastTy != -1 && map[lastTx][lastTy] != 'C' && nWorkers[lastTx][lastTy] == 0) {
+                    best = distance[lastTx][lastTy];
+                    bestX = lastTx;
+                    bestY = lastTy;
                 }
-                
-                tx = wrap(tx2);
-                ch = map[tx][ty];
-                if (ch != C && ch != '#' && nWorkers[tx][ty] == 0) {
-                    int d = distance[tx][ty];
-                    if (best == -1 || d < best) {
-                        best = d;
-                        bestX = tx;
-                        bestY = ty;
+                for (int i = 0; i < txl; i++) {
+                    int tx = wrap(tx1);
+                    int ty = wrap(ty1 + txl - i);
+                    char ch = map[tx][ty];
+                    if (ch != C && ch != '#' && nWorkers[tx][ty] == 0) {
+                        int d = distance[tx][ty];
+                        if (best == -1 || d < best) {
+                            best = d;
+                            bestX = tx;
+                            bestY = ty;
+                            bestSpecial = 3 * txl + i;
+                        }
                     }
-                }
-
-                tx = wrap(tx1 + i);
-                ty = ty1;
-                ch = map[tx][ty];
-                if (ch != C && ch != '#' && nWorkers[tx][ty] == 0) {
-                    int d = distance[tx][ty];
-                    if (best == -1 || d < best) {
-                        best = d;
-                        bestX = tx;
-                        bestY = ty;
+                    
+                    tx = wrap(tx2);
+                    ch = map[tx][ty];
+                    if (ch != C && ch != '#' && nWorkers[tx][ty] == 0) {
+                        int d = distance[tx][ty];
+                        if (best == -1 || d < best) {
+                            best = d;
+                            bestX = tx;
+                            bestY = ty;
+                            bestSpecial = i + txl;
+                        }
                     }
-                }
-
-                ty = ty2;
-                ch = map[tx][ty];
-                if (ch != C && ch != '#' && nWorkers[tx][ty] == 0) {
-                    int d = distance[tx][ty];
-                    if (best == -1 || d < best) {
-                        best = d;
-                        bestX = tx;
-                        bestY = ty;
+    
+                    tx = wrap(tx1 + i);
+                    ty = wrap(ty1);
+                    ch = map[tx][ty];
+                    if (ch != C && ch != '#' && nWorkers[tx][ty] == 0) {
+                        int d = distance[tx][ty];
+                        if (best == -1 || d < best) {
+                            best = d;
+                            bestX = tx;
+                            bestY = ty;
+                            bestSpecial = i;
+                        }
+                    }
+    
+                    tx = wrap(tx1 + txl - i);
+                    ty = wrap(ty2);
+                    ch = map[tx][ty];
+                    if (ch != C && ch != '#' && nWorkers[tx][ty] == 0) {
+                        int d = distance[tx][ty];
+                        if (best == -1 || d < best) {
+                            best = d;
+                            bestX = tx;
+                            bestY = ty;
+                            bestSpecial = 2 * txl + i;
+                        }
                     }
                 }
             }
@@ -280,21 +377,28 @@ public class AGridCulture
                     int tx = wrap(tx1 + i);
                     int ty = wrap(ty1 + j);
                     char ch = map[tx][ty];
+                    if (ch == C) {
+                        specialWriter.print('C');
+                    }
+                    else if (ch == '#') {
+                        specialWriter.print('#');
+                    }
+                    else if (ch == '.') {
+                        specialWriter.print('.');
+                    }
+                    else {
+                        specialWriter.print('X');
+                    }
                     if (tx == x && ty == y) {
                         specialWriter.print('*');
                     }
                     else if (tx == bestX && ty == bestY) {
                         specialWriter.print('$');
                     }
-                    else if (ch == C) {
-                        specialWriter.print('C');
-                    }
-                    else if (ch == '#') {
-                        specialWriter.print('#');
-                    }
                     else {
-                        specialWriter.print('.');
+                        specialWriter.print(' ');
                     }
+                    specialWriter.print(' ');
                 }
                 specialWriter.println();
             }
@@ -413,6 +517,7 @@ public class AGridCulture
     private boolean[][] harvestCell;
     private boolean[][] harvestPost;
     private boolean[][] scored;
+    private int[][] evilDist;
     
     private List<Worker> workers = new ArrayList<>();
     private List<EnemyWorker> enemyWorkers = new ArrayList<>();
@@ -754,6 +859,7 @@ public class AGridCulture
                 harvestCell = new boolean[A][A];
                 harvestPost = new boolean[A][A];
                 scored = new boolean[A][A];
+                evilDist = new int[A][A];
                 client.readLine(); // map size
                 for (int i = 0; i < A; i++) {
                     String line = client.readLine();
@@ -793,9 +899,9 @@ public class AGridCulture
                         }
                         worker.recomputeDistances();
                         workers.add(worker);
-                        if (i < 1) {
+                        if (i < num / 2) {
                             // Make this a special worker.
-                            worker.makeSpecial();
+                            worker.makeSpecial(workers);
                         }
                     }
                 }
@@ -871,6 +977,7 @@ public class AGridCulture
                     }
 
                     // Wait until the end of the turn.
+                    System.err.println("Commands left: " + (L - client.getCommandsUsed()));
                     client.doWait();
                     
                     // Determine any new markers that were placed in the previous turn.
@@ -1123,7 +1230,7 @@ public class AGridCulture
         Collections.sort(areas);
         for (Area area : areas) {
             // How big a size do we want before we harvest?
-            if (area.x.length > 1 && canExecuteCommand()) {
+            if (area.x.length > 3 && canExecuteCommand()) {
                 // Yum!
                 System.err.println("Harvesting at " + area.sx + " " + area.sy + " with size of " + area.x.length);
                 client.writeCommand("SCORE", area.sx, area.sy);
@@ -1303,6 +1410,10 @@ public class AGridCulture
             Worker worker = workers.get(i);
             if (map[worker.x][worker.y] != '.' || nWorkers[worker.x][worker.y] > 1) {
                 // No point in putting a marker down here, since we can't.
+                if (worker.special) {
+                    specialWriter.println("Unable to put a marker for " + worker.id + " because: " + map[worker.x][worker.y] + " " + nWorkers[worker.x][worker.y]);
+                    specialWriter.flush();
+                }
                 continue;
             }
             boolean ok = true; //false;
@@ -1332,6 +1443,7 @@ public class AGridCulture
             if (ok && client.getCommandsUsed() < L - 1) {
                 // We can attempt to put a marker down.
                 try {
+                    specialWriter.println("Putting marker for worker " + worker.id + " at " + worker.x + " " + worker.y);
                     //System.err.println("Worker " + worker.id + " placing marker at " + worker.x + ";" + worker.y);
                     client.writeCommand("PUT", worker.id, C);
                     
@@ -1341,6 +1453,12 @@ public class AGridCulture
                 }
                 catch (ProtocolException e) {
                     // Failed for some reason; probably because another team beat us to it.
+                }
+            }
+            else {
+                if (worker.special) {
+                    specialWriter.println("Unable to put marker for worker " + worker.id + " because we don't have enough commands left!");
+                    specialWriter.flush();
                 }
             }
         }
@@ -1370,7 +1488,7 @@ public class AGridCulture
         for (int i = 0; i < workers.size(); i++) {
             Worker worker = workers.get(i);
             if (worker.special) {
-                worker.specialMove();
+                worker.specialMove(workers);
                 worker.allocatedToMove = true;
             }
             else {
@@ -1469,8 +1587,8 @@ public class AGridCulture
                     if (worker.x != target.x || worker.y != target.y) {
                         //System.err.println("Moving worker " + worker.id + " from " + worker.x + ";" + worker.y + " to " + target.x + ";" + target.y + " for value " + val + " with " + worker.dirX[target.x][target.y] + " and " + worker.dirY[target.x][target.y]);
                         client.writeCommand("MOVE", worker.id, worker.dirX[target.x][target.y], worker.dirY[target.x][target.y]);
-                        worker.nextX = worker.x + worker.dirX[target.x][target.y];
-                        worker.nextY = worker.y + worker.dirY[target.x][target.y];
+                        worker.nextX = wrap(worker.x + worker.dirX[target.x][target.y]);
+                        worker.nextY = wrap(worker.y + worker.dirY[target.x][target.y]);
                         if (worker.nextX < 0) worker.nextX += A;
                         if (worker.nextX >= A) worker.nextX -= A;
                         if (worker.nextY < 0) worker.nextY += A;
