@@ -629,6 +629,7 @@ async def play_game(shelf, client, window):
     shared_full = False
     FINAL_SCORE_GAUGE.labels('me').set(0)
     FINAL_SCORE_GAUGE.labels('you').set(0)
+    cube_weighting = np.linspace(1.03, 1.0, num=world.size_own)
     while True:
         logging.debug('Starting turn')
         old_state = state
@@ -682,6 +683,8 @@ async def play_game(shelf, client, window):
                     continue
                 own_pos = None
                 own_orient = None
+                own_hits = -1
+                own_hits2 = -1e-8
                 shared_pos = None
                 shared_hits = -1
                 shared_orient = None
@@ -689,18 +692,19 @@ async def play_game(shelf, client, window):
                 loss = max(0, avail[i].price - cash)
                 any_fit = False
 
-                own_hits = -1
                 for orient in ORIENTATIONS:
                     piece = orient(avail[i])
                     fitness = fits3d(own, prefix, piece)
-                    hits = np.max(fitness)
-                    if hits > own_hits:
-                        good = np.array(np.nonzero(fitness == hits))
-                        good_close = np.max(np.abs(good + piece.centroid[:, np.newaxis]), axis=0)
-                        good_idx = np.argmin(good_close)
-                        own_pos = list(reversed(good[:, good_idx]))
+                    fitness2 = fitness * cube_weighting[np.newaxis, np.newaxis, :]
+                    fitness2 *= cube_weighting[np.newaxis, :, np.newaxis]
+                    fitness2 *= cube_weighting[:, np.newaxis, np.newaxis]
+                    hits2 = np.max(fitness2)
+                    if hits2 > own_hits2:
+                        good = np.array(np.nonzero(fitness2 == hits2))
+                        own_pos = list(reversed(good[:, 0]))
                         own_orient = orient
-                        own_hits = hits
+                        own_hits = fitness[own_pos[2], own_pos[1], own_pos[0]]
+                        own_hits2 = hits2
 
                     piece2d = Piece2D(piece)
                     fitness = fits2d(shared, piece2d, halow, weight)
@@ -732,6 +736,8 @@ async def play_game(shelf, client, window):
                     scaling = world.good_bonus if q > 0 else world.bad_penalty
                     own_value = int(own_value * (1 + scaling * q))
                     value += own_value
+                    if own_hits > 0:
+                        value *= own_hits2 / own_hits
                     metric = (value + world.shared_coeff * shared_hits) / avail[i].effort
                     # If we can grab a spare 1x1x1, do so
                     if (state.me.effort + avail[i].effort) // world.effort_period > state.you.effort // world.effort_period:
