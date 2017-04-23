@@ -64,6 +64,7 @@ PLAYER_GAUGES = [Gauge('bestow_player_' + name[0], 'Player value of ' + name[0],
 NUM_PIECES_GAUGE = Gauge('bestow_num_pieces', 'Number of pieces in game')
 BIGGEST_CUBE_GAUGE = Gauge('bestow_biggest_cube', 'Biggest cube in space', labelnames=['player'])
 BIGGEST_POTENTIAL_CUBE_GAUGE = Gauge('bestow_biggest_potential_cube', 'Biggest cube if all single cubes added', labelnames=['player'])
+FINAL_SCORE_GAUGE = Gauge('bestore_final_score', 'End-of-game score', labelnames=['player'])
 OPERATION_TIME = Histogram('bestow_operation_time', 'Function call timings', labelnames=['function'])
 _do_assertions = False
 
@@ -615,6 +616,8 @@ async def play_game(shelf, client, window):
     shared = np.empty((world.size_shared,) * 2, np.int8)
     own = np.empty((world.size_own,) * 3, np.int8)
     shared_full = False
+    FINAL_SCORE_GAUGE.labels('me').set(0)
+    FINAL_SCORE_GAUGE.labels('you').set(0)
     while True:
         logging.debug('Starting turn')
         old_state = state
@@ -625,6 +628,9 @@ async def play_game(shelf, client, window):
                           old_effort, state.total_effort)
             return
         old_effort = state.total_effort
+        if state.turn is None:
+            FINAL_SCORE_GAUGE.labels('me').set(state.me.score)
+            FINAL_SCORE_GAUGE.labels('you').set(state.you.score)
         # Validations
         assert_equal(state.me.effort, old_state.me.effort, 'effort')
         assert_equal(state.me.profit_own, old_state.me.profit_own, 'profit_own')
