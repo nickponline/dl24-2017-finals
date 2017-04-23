@@ -9,6 +9,7 @@ import gc
 import copy
 from collections import namedtuple
 from enum import Enum
+import itertools
 import numpy as np
 import dl24.client
 from dl24.client import command, ProtocolError, Failure
@@ -512,6 +513,37 @@ def color_scores2(space, world):
     return scores, contrib
 
 
+def optimal_multipliers(me, you, cscores):
+    C = len(cscores) - 1
+    w = [5, 3, 1]
+    best = copy.copy(me)
+    best_score = -1
+    for perm in itertools.permutations(range(1, C + 1), 3):
+        # Validate
+        good = True
+        for i in range(3):
+            mult = w[i]
+            color = perm[i]
+            # If we've already used it, must match
+            if me[mult] > 0 and me[mult] != color:
+                good = False
+            # We can't have assigned another one to this color
+            if me[mult] != color and color in me:
+                good = False
+            # Opponent can't have used this multiplier on this color
+            if you[mult] == color:
+                good = False
+        if good:
+            score = cscores[perm[0]] * w[0] + cscores[perm[1]] * w[1] + cscores[perm[2]] * w[2]
+            if score > best_score:
+                best_score = score
+                best = copy.copy(me)
+                best[5] = perm[0]
+                best[3] = perm[1]
+                best[1] = perm[2]
+    return best
+
+
 class Window(dl24.visualization.Window):
     COLORS = ['black', 'red', 'green', 'blue', 'yellow', 'purple', 'cyan', 'orange', 'gray']
 
@@ -582,8 +614,9 @@ async def play_game(shelf, client, window):
     old_effort = 0
     shared = np.empty((world.size_shared,) * 2, np.int8)
     own = np.empty((world.size_own,) * 3, np.int8)
+    shared_full = False
     while True:
-        logging.info('Starting turn')
+        logging.debug('Starting turn')
         old_state = state
         state = await client.get_match_info()
         # Check if game ended
@@ -597,16 +630,16 @@ async def play_game(shelf, client, window):
         assert_equal(state.me.profit_own, old_state.me.profit_own, 'profit_own')
 
         used_piece = False
-        logging.info('Got state')
+        logging.debug('Got state')
         shared = await client.get_shared_space(out=shared)
         if window:
             window.set_shared(shared, state)
         if state.my_turn:
-            logging.info('Got shared')
+            logging.debug('Got shared')
             own = await client.get_my_space(out=own)
-            logging.info('Getting prefix sum')
+            logging.debug('Getting prefix sum')
             prefix = prefix_sum(own)
-            logging.info('Got prefix sum')
+            logging.debug('Got prefix sum')
             opponent = await client.get_opponent_space()
             biggest = biggest_cube(own)
             biggest_possible = best_singles3d(own, state.me.single_cube)[-1]
@@ -615,16 +648,18 @@ async def play_game(shelf, client, window):
             BIGGEST_CUBE_GAUGE.labels('you').set(biggest_cube(opponent))
             cscores, halow = color_scores2(shared, world)
             weight = np.zeros((world.colors + 1,), np.float32)
-            if state.you.mcolors[5] > 0:
-                weight[state.you.mcolors[5]] -= 2.0
-            if state.you.mcolors[3] > 0:
-                weight[state.you.mcolors[3]] += 2.0
-            logging.info('Got metrics')
+            you_guess = optimal_multipliers(state.you.mcolors, state.me.mcolors, cscores)
+            me_guess = optimal_multipliers(state.me.mcolors, you_guess, cscores)
+            for i in [5, 3, 1]:
+                weight[you_guess[i]] -= i
+                weight[me_guess[i]] += i
+            logging.debug('%s - %s  - %s', you_guess, me_guess, cscores)
+            logging.debug('Got metrics')
             avail_idx = await client.get_pieces_in_range()
             avail = [pieces[idx] for idx in avail_idx]
             best = None
             cash = state.me.budget - state.me.profit_own
-            logging.info('Evaluating pieces')
+            logging.debug('Evaluating pieces')
             for i in range(len(avail)):
                 if avail[i].price > state.me.budget:
                     continue
@@ -635,6 +670,7 @@ async def play_game(shelf, client, window):
                 shared_orient = None
                 own_value = avail[i].value
                 loss = max(0, avail[i].price - cash)
+                any_fit = False
 
                 own_hits = -1
                 for orient in ORIENTATIONS:
@@ -652,6 +688,8 @@ async def play_game(shelf, client, window):
                     piece2d = Piece2D(piece)
                     fitness = fits2d(shared, piece2d, halow, weight)
                     hits = np.max(fitness)
+                    if hits > -1e9:
+                        any_fit = True
                     if hits > shared_hits:
                         good = np.array(np.nonzero(fitness == hits))
                         shared_pos = list(reversed(good[:, -1]))
@@ -659,6 +697,8 @@ async def play_game(shelf, client, window):
                         shared_hits = hits
                 if shared_pos is None:
                     shared_hits = 0
+                if not any_fit:
+                    shared_full = True
 
                 if own_pos:
                     value = -loss
@@ -681,7 +721,7 @@ async def play_game(shelf, client, window):
                             best = Placement(i, own_pos=own_pos, own_orient=own_orient,
                                              shared_pos=shared_pos, shared_orient=shared_orient,
                                              value=value, metric=metric)
-            logging.info('Done evaluating pieces')
+            logging.debug('Done evaluating pieces')
             if best is not None:
                 await client.buy_piece(best.idx + 1)
                 if best.own_pos:
@@ -702,24 +742,26 @@ async def play_game(shelf, client, window):
                 state.me.effort += avail[best.idx].effort
             else:
                 state.me.effort = state.you.effort + 1
+            multipliers_set = (state.me.mcolors.count(-1) == 3)
+            if (state.me.effort >= world.effort_end or shared_full) and not multipliers_set:
+                # Game is about to end, figure out multipliers to use
+                logging.info('Game ending or shared space full, setting multipliers')
+                cscores = color_scores(shared, world)
+                ideal = optimal_multipliers(state.me.mcolors, state.you.mcolors, cscores)
+                for multiplier in [5, 3, 1]:
+                    best = ideal[multiplier]
+                    if state.me.mcolors[multiplier] != best:
+                        try:
+                            await client.set_multiplier(best, multiplier)
+                            state.me.multipliers[best] = multiplier
+                        except Failure as error:
+                            # Soft fail on not your turn (try again when it is)
+                            if error.errno != 103:
+                                raise
+                            else:
+                                logging.warn('Failed to set multipliers (not our turn)')
             if state.me.effort >= world.effort_end:
                 # Game is about to end, figure out multipliers to use
-                logging.info('Game ending, setting multipliers')
-                cscores = color_scores(shared, world)
-                for multiplier in [5, 3, 1]:
-                    if multiplier in state.me.multipliers:
-                        continue     # Already used
-                    best = -1
-                    best_score = -1.0
-                    for i in range(1, world.colors + 1):
-                        if state.me.multipliers[i] > 0 or state.you.multipliers[i] == multiplier:
-                            continue
-                        if cscores[i] > best_score:
-                            best_score = cscores[i]
-                            best = i
-                    if best > 0:
-                        await client.set_multiplier(best, multiplier)
-                        state.me.multipliers[best] = multiplier
                 logging.info('Game ending, setting single cubes')
                 x, y, z, size = best_singles3d(own, state.me.single_cube)
                 try:
