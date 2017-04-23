@@ -58,6 +58,7 @@ public class AGridCulture
         int nextX, nextY;
         boolean special = false;
         int tx1, ty1, tx2, ty2, txl;
+        int lastTx, lastTy;
 
         Worker(int id, int x, int y)
         {
@@ -114,28 +115,118 @@ public class AGridCulture
                 }
             }
             
-            specialWriter.println("Best square for worker " + id + " has size " + best);
-            int MAX = 10;
-            if (best > MAX) {
-                // Cap at MAX for now.
-                specialWriter.println("Capping to " + MAX);
-                best = MAX;
+            int best2 = -1, best2Neg = -1, best2Pos = -1;
+            neg = 0;
+            while (true) {
+                neg++;
+                boolean ok = map[wrap(x - neg)][wrap(y + neg)] != '#';
+                for (int i = 0; i < neg && ok; i++) {
+                    ok &= map[wrap(x - neg)][wrap(y + i)] != '#';
+                    ok &= map[wrap(x - i)][wrap(y + neg)] != '#';
+                }
+                if (!ok) {
+                    neg--;
+                    break;
+                }
+                
+                // Now increment in the positive direction and see how far we can go.
+                int pos = 0;
+                while (true) {
+                    int total = pos + neg;
+                    if (total > best2) {
+                        best2 = total;
+                        best2Neg = neg;
+                        best2Pos = pos;
+                    }
+                    
+                    pos++;
+                    ok = map[wrap(x + pos)][wrap(y - pos)] != '#';
+                    for (int i = -neg; i < pos && ok; i++) {
+                        ok &= map[wrap(x + pos)][wrap(y - i)] != '#';
+                        ok &= map[wrap(x + i)][wrap(y - pos)] != '#';
+                    }
+                    if (!ok) {
+                        break;
+                    }
+                }
             }
-            specialWriter.flush();
-            tx1 = x - bestNeg;
-            ty1 = y - bestNeg;
-            tx2 = tx1 + best;
-            ty2 = ty1 + best;
-            txl = best;
+            
+            if (best2 > best) {
+                specialWriter.println("Best square for worker " + id + " has size " + best2);
+                if (best2 > MAX) {
+                    // Cap at MAX for now.
+                    specialWriter.println("Capping to " + MAX);
+                    best2 = MAX;
+                }
+                specialWriter.flush();
+                tx1 = x - best2Neg;
+                ty1 = y - best2Pos;
+                tx2 = tx1 + best2;
+                ty2 = ty1 + best2;
+                txl = best2;
+            }
+            else {
+                specialWriter.println("Best square for worker at " + x + " " + y + " with ID " + id + " has size " + best);
+                if (best > MAX) {
+                    // Cap at MAX for now.
+                    specialWriter.println("Capping to " + MAX);
+                    best = MAX;
+                }
+                specialWriter.flush();
+                tx1 = x - bestNeg;
+                ty1 = y - bestNeg;
+                tx2 = tx1 + best;
+                ty2 = ty1 + best;
+                txl = best;
+            }
+            lastTx = -1; lastTy = -1;
         }
 
+        int MAX = 10;
+        int MIN = 4;
         void specialMove()
             throws Exception
         {
+            nextX = x;
+            nextY = y;
+            
+            if (txl < MIN) {
+                // If we could not get a local square with a useful size, then we should go searching for one.
+                if (lastTx != -1) {
+                    // We already have a target in mind.
+                    if (x == lastTx && y == lastTy) {
+                        // We've made it! Re-evaluate our options.
+                        makeSpecial();
+                    }
+                    else {
+                        // Otherwise, move toward the new target.
+                        if (canExecuteCommand()) {
+                            specialWriter.println("Moving from " + x + " " + y + " towards new area at " + lastTx + " " + lastTy);
+                            client.writeCommand("MOVE", id, dirX[lastTx][lastTy]);
+                            nextX = x + dirX[lastTx][lastTy];
+                            nextY = y + dirY[lastTx][lastTy];
+                            specialWriter.println("Next is " + nextX + " " + nextY);
+                        }
+                    }
+                }
+                else {
+                    // Decide on a new target to find a space for us to make a square.
+                    do {
+                        lastTx = wrap(x + random.nextInt(20) - 10);
+                        lastTy = wrap(y + random.nextInt(20) - 10);
+                    } while (map[lastTx][lastTy] == '#');
+                }
+            }
+            
             // Find the cell on our square border that is closest to us and which needs to be marked.
             int best = -1;
             int bestX = -1, bestY = -1;
-            for (int i = 0; i < txl; i++) {
+            if (lastTx != -1 && lastTy != -1 && map[lastTx][lastTy] != 'C' && nWorkers[lastTx][lastTy] == 0) {
+                best = distance[lastTx][lastTy];
+                bestX = lastTx;
+                bestY = lastTy;
+            }
+            for (int i = 0; i <= txl; i++) {
                 int tx = wrap(tx1);
                 int ty = wrap(ty1 + i);
                 char ch = map[tx][ty];
@@ -183,34 +274,64 @@ public class AGridCulture
                 }
             }
             
-            if (best > 0 && canExecuteCommand()) {
-                specialWriter.println("Closest point is " + bestX + " " + bestY + " with distance of " + best);
-                client.writeCommand("MOVE", dirX[bestX][bestY], dirY[bestX][bestY]);
-                nextX = x + dirX[bestX][bestY];
-                nextY = y + dirY[bestX][bestY];
+            specialWriter.println("T: " + tx1 + " " + ty1 + " " + txl);
+            for (int i = 0; i <= txl; i++) {
+                for (int j = 0; j <= txl; j++) {
+                    int tx = wrap(tx1 + i);
+                    int ty = wrap(ty1 + j);
+                    char ch = map[tx][ty];
+                    if (tx == x && ty == y) {
+                        specialWriter.print('*');
+                    }
+                    else if (tx == bestX && ty == bestY) {
+                        specialWriter.print('$');
+                    }
+                    else if (ch == C) {
+                        specialWriter.print('C');
+                    }
+                    else if (ch == '#') {
+                        specialWriter.print('#');
+                    }
+                    else {
+                        specialWriter.print('.');
+                    }
+                }
+                specialWriter.println();
             }
-            else if (canExecuteCommand()) {
-                // Pick the closest valid cell within our special area.
-                best = -1;
-                for (int i = 0; i < txl; i++) {
-                    for (int j = 0; j < txl; j++) {
-                        int tx = wrap(tx1 + i);
-                        int ty = wrap(tx2 + j);
-                        if (map[tx][ty] != '#' && map[tx][ty] != C && nWorkers[tx][ty] == 0) {
-                            int d = distance[tx][ty];
-                            if (best == -1 || d < best) {
-                                best = d;
-                                bestX = tx;
-                                bestY = ty;
+            if (best > 0 && canExecuteCommand()) {
+                specialWriter.println("Closest point to " + x + " " + y + " is " + bestX + " " + bestY + " with distance of " + best);
+                client.writeCommand("MOVE", id, dirX[bestX][bestY], dirY[bestX][bestY]);
+                nextX = wrap(x + dirX[bestX][bestY]);
+                nextY = wrap(y + dirY[bestX][bestY]);
+                specialWriter.println("Next is " + nextX + " " + nextY);
+                lastTx = bestX; lastTy = bestY;
+            }
+            else {
+                lastTx = -1; lastTy = -1;
+                if (canExecuteCommand()) {
+                    // Pick the closest valid cell within our special area.
+                    best = -1;
+                    for (int i = 0; i <= txl; i++) {
+                        for (int j = 0; j <= txl; j++) {
+                            int tx = wrap(tx1 + i);
+                            int ty = wrap(tx2 + j);
+                            if (map[tx][ty] != '#' && map[tx][ty] != C && nWorkers[tx][ty] == 0) {
+                                int d = distance[tx][ty];
+                                if (best == -1 || d < best) {
+                                    best = d;
+                                    bestX = tx;
+                                    bestY = ty;
+                                }
                             }
                         }
                     }
-                }
-                if (best > 0) {
-                    specialWriter.println("Closest arbitrary point is " + bestX + " " + bestY + " with distance of " + best);
-                    client.writeCommand("MOVE", dirX[bestX][bestY], dirY[bestX][bestY]);
-                    nextX = x + dirX[bestX][bestY];
-                    nextY = y + dirY[bestX][bestY];
+                    if (best > 0) {
+                        specialWriter.println("Closest arbitrary point to " + x + " " + y + " is " + bestX + " " + bestY + " with distance of " + best);
+                        client.writeCommand("MOVE", id, dirX[bestX][bestY], dirY[bestX][bestY]);
+                        nextX = wrap(x + dirX[bestX][bestY]);
+                        nextY = wrap(y + dirY[bestX][bestY]);
+                        specialWriter.println("Next is " + nextX + " " + nextY);
+                    }
                 }
             }
             specialWriter.flush();
