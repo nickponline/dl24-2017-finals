@@ -316,24 +316,24 @@ def fix_piece(piece):
 
 OPERATION_TIME_fits2d = OPERATION_TIME.labels('fits2d')
 @OPERATION_TIME_fits2d.time()
-def fits2d(space, piece, out=None):
+def fits2d(space, piece, halow, weights):
     N = space.shape[0]
     fix_piece(piece)
-    if out is None:
-        out = np.empty((N, N), dtype=np.bool_)
+    out = np.empty((N, N), dtype=np.float32)
     start = np.maximum(0, -piece.lower)
     stop = np.minimum(N, N - piece.upper)
     xl, yl = start
     xh, yh = stop
     pos = piece.pos
     space_bool = space.astype(np.bool_)
-    out.fill(True)
-    out[yl:yh, xl:xh].fill(False)
+    out.fill(-1e12)
+    out[yl:yh, xl:xh].fill(0.0)
     for i in range(pos.shape[1]):
         x, y = pos[:, i]
-        out[yl:yh, xl:xh] |= space_bool[yl+y:yh+y, xl+x:xh+x]
-    # Convert from conflict to fit
-    out = np.logical_not(out, out=out)
+        color = piece.color[i]
+        if weights[color]:
+            out[yl:yh, xl:xh] += weights[color] * halow[color, yl+y:yh+y, xl+x:xh+x]
+        out[yl:yh, xl:xh] -= space[yl+y:yh+y, xl+x:xh+x] * 1e12
     return out
 
 
@@ -476,6 +476,42 @@ def color_scores(space, world):
     return scores
 
 
+def color_scores2(space, world):
+    space = np.copy(space)
+    N = space.shape[0]
+    scores = [0.0] * (world.colors + 1)
+    st = []
+    dx = [-1, 0, 1, 0]
+    dy = [0, -1, 0, 1]
+    contrib = np.zeros((world.colors + 1, N, N), np.float32)
+    for y in range(N):
+        for x in range(N):
+            color = space[y, x]
+            if color > 0:
+                size = 1
+                space[y, x] = 0
+                st.append((x, y))
+                halo = set()
+                while st:
+                    x, y = st.pop()
+                    for i in range(4):
+                        x2 = x + dx[i]
+                        y2 = y + dy[i]
+                        if x2 >= 0 and x2 < N and y2 >= 0 and y2 < N:
+                            if space[y2, x2] == color:
+                                space[y2, x2] = 0
+                                size += 1
+                                st.append((x2, y2))
+                            elif space[y2, x2] == 0:
+                                halo.add((x2, y2))
+                region_score = math.pow(float(size), world.shared_exponent)
+                delta = math.pow(float(size) + 1, world.shared_exponent) - region_score
+                for x, y in halo:
+                    contrib[color, y, x] += delta
+                scores[color] += region_score
+    return scores, contrib
+
+
 class Window(dl24.visualization.Window):
     COLORS = ['black', 'red', 'green', 'blue', 'yellow', 'purple', 'cyan', 'orange', 'gray']
 
@@ -504,13 +540,18 @@ class Window(dl24.visualization.Window):
         C = self.world.colors
         texts = self.legend.get_texts()
         cscores = color_scores(shared, self.world)
+        me = 0
+        you = 0
         for i in range(1, C + 1):
             text = '{} - {}'.format(i, cscores[i])
             if state.me.multipliers[i] > 0:
                 text += '  +{}'.format(state.me.multipliers[i])
+                me += state.me.multipliers[i] * cscores[i]
             if state.you.multipliers[i] > 0:
                 text += '  -{}'.format(state.you.multipliers[i])
+                you += state.you.multipliers[i] * cscores[i]
             texts[i - 1].set_text(text)
+        self.axes.set_xlabel('Me: {}  You: {}'.format(me, you))
         self.event_source()
 
 
@@ -572,6 +613,12 @@ async def play_game(shelf, client, window):
             BIGGEST_CUBE_GAUGE.labels('me').set(biggest)
             BIGGEST_POTENTIAL_CUBE_GAUGE.labels('me').set(biggest_possible)
             BIGGEST_CUBE_GAUGE.labels('you').set(biggest_cube(opponent))
+            cscores, halow = color_scores2(shared, world)
+            weight = np.zeros((world.colors + 1,), np.float32)
+            if state.you.mcolors[5] > 0:
+                weight[state.you.mcolors[5]] -= 2.0
+            if state.you.mcolors[3] > 0:
+                weight[state.you.mcolors[3]] += 2.0
             logging.info('Got metrics')
             avail_idx = await client.get_pieces_in_range()
             avail = [pieces[idx] for idx in avail_idx]
@@ -584,37 +631,34 @@ async def play_game(shelf, client, window):
                 own_pos = None
                 own_orient = None
                 shared_pos = None
-                shared_weight = -1000
+                shared_hits = -1
                 shared_orient = None
                 own_value = avail[i].value
                 loss = max(0, avail[i].price - cash)
 
-                best_hits = -1
+                own_hits = -1
                 for orient in ORIENTATIONS:
                     piece = orient(avail[i])
                     fitness = fits3d(own, prefix, piece)
                     hits = np.max(fitness)
-                    if hits > best_hits:
+                    if hits > own_hits:
                         good = np.array(np.nonzero(fitness == hits))
                         good_close = np.max(np.abs(good - world.size_own / 2), axis=0)
                         good_idx = np.argmin(good_close)
                         own_pos = list(reversed(good[:, good_idx]))
                         own_orient = orient
-                        best_hits = hits
+                        own_hits = hits
 
                     piece2d = Piece2D(piece)
-                    weight = 0.1 * len(piece2d.color)  # TODO: tune
-                    weight -= piece2d.color.count(state.you.mcolors[5])
-                    weight += piece2d.color.count(state.you.mcolors[3])
-                    if weight > shared_weight:
-                        collide = fits2d(shared, piece2d)
-                        good_y, good_x = collide.nonzero()
-                        if len(good_y):
-                            shared_weight = weight
-                            shared_orient = orient
-                            shared_pos = (good_x[0], good_y[0])
+                    fitness = fits2d(shared, piece2d, halow, weight)
+                    hits = np.max(fitness)
+                    if hits > shared_hits:
+                        good = np.array(np.nonzero(fitness == hits))
+                        shared_pos = list(reversed(good[:, -1]))
+                        shared_orient = orient
+                        shared_hits = hits
                 if shared_pos is None:
-                    shared_weight = 0
+                    shared_hits = 0
 
                 if own_pos:
                     value = -loss
@@ -625,13 +669,13 @@ async def play_game(shelf, client, window):
                         start = piece.lower + own_pos
                         stop = piece.upper + own_pos + 1
                         test_hits = np.sum(own[start[2]:stop[2], start[1]:stop[1], start[0]:stop[0]])
-                        assert_equal(test_hits, best_hits, 'hits')
+                        assert_equal(test_hits, own_hits, 'hits')
                     ### End testing
-                    q = best_hits - world.quality_min
+                    q = own_hits - world.quality_min
                     scaling = world.good_bonus if q > 0 else world.bad_penalty
                     own_value = int(own_value * (1 + scaling * q))
                     value += own_value
-                    metric = (value + 0.001 * shared_weight) / avail[i].effort
+                    metric = (value + world.shared_coeff * shared_hits) / avail[i].effort
                     if value > 0:
                         if best is None or metric > best.metric:
                             best = Placement(i, own_pos=own_pos, own_orient=own_orient,
