@@ -696,7 +696,7 @@ async def play_game(shelf, client, window):
                     hits = np.max(fitness)
                     if hits > own_hits:
                         good = np.array(np.nonzero(fitness == hits))
-                        good_close = np.max(np.abs(good + piece.centroid[:, np.newaxis] - world.size_own / 2), axis=0)
+                        good_close = np.max(np.abs(good + piece.centroid[:, np.newaxis]), axis=0)
                         good_idx = np.argmin(good_close)
                         own_pos = list(reversed(good[:, good_idx]))
                         own_orient = orient
