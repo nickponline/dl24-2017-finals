@@ -426,6 +426,13 @@ def best_singles3d(space, singles):
             return best
 
 
+def place3d(space, piece, x, y, z):
+    offset = np.array([[x], [y], [z]], dtype=np.int8)
+    pos = piece.pos + offset
+    for i in range(pos.shape[1]):
+        space[pos[2, i], pos[1, i], pos[0, i]] = 1
+
+
 def place2d(space, piece, x, y):
     offset = np.array([[x], [y]], dtype=np.int8)
     pos = piece.pos + offset
@@ -577,6 +584,8 @@ async def play_game(shelf, client):
                         *best.own_pos,
                         best.own_orient.xs, best.own_orient.ys, best.own_orient.zs)
                     state.me.profit_own += best.value
+                    piece = best.own_orient(avail[best.idx])
+                    place3d(own, piece, *best.own_pos)
                 if best.shared_pos:
                     await client.place_shared_piece(*best.shared_pos, 0, 0, 0)
                     place2d(shared, avail2d[best.idx], *best.shared_pos)
