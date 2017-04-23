@@ -543,10 +543,10 @@ async def play_game(shelf, client):
                     fitness = fits3d(own, prefix, piece)
                     hits = np.max(fitness)
                     if hits > best_hits:
-                        own_pos_flat = np.argmax(fitness)
-                        own_pos = [own_pos_flat % world.size_own,
-                                   own_pos_flat // world.size_own % world.size_own,
-                                   own_pos_flat // world.size_own**2]
+                        good = np.array(np.nonzero(fitness == hits))
+                        good_close = np.max(np.abs(good - world.size_own / 2), axis=0)
+                        good_idx = np.argmin(good_close)
+                        own_pos = list(reversed(good[:, good_idx]))
                         own_orient = orient
                         best_hits = hits
 
