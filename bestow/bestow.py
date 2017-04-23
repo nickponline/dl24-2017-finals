@@ -13,6 +13,8 @@ import numpy as np
 import dl24.client
 from dl24.client import command, ProtocolError, Failure
 import dl24.visualization
+import matplotlib.colors
+import matplotlib.patches
 import gbulb
 from prometheus_client import Counter, Gauge, Histogram
 
@@ -475,22 +477,40 @@ def color_scores(space, world):
 
 
 class Window(dl24.visualization.Window):
+    COLORS = ['black', 'red', 'green', 'blue', 'yellow', 'purple', 'cyan', 'orange', 'gray']
+
     def __init__(self, *args, **kwargs):
         super(Window, self).__init__(*args, **kwargs)
         self.im_artist = None
+        self.legend = None
+        self.C = 0
 
     def set_world(self, world):
+        self.world = world
         if self.im_artist is None:
             img = np.zeros((world.size_shared, world.size_shared), np.float32)
-            img[3:8, 5:20] = 1.0
+            cmap = matplotlib.colors.ListedColormap(self.COLORS, N=world.colors + 1)
             self.im_artist = self.axes.imshow(
                 img, aspect='equal', interpolation='nearest',
-                origin='upper', vmin=0, vmax=world.colors)
-            self.add_artists([self.im_artist])
+                origin='upper', vmin=0, vmax=world.colors, cmap=cmap)
+            proxies = [matplotlib.patches.Patch(color=self.COLORS[i], label='{}'.format(i))
+                       for i in range(1, world.colors + 1)]
+            self.legend = self.axes.legend(handles=proxies, bbox_to_anchor=(1.05, 1), loc=2)
+            self.add_artists([self.im_artist, self.legend])
         self.min_bounds = [(-0.5, -0.5), (world.size_shared - 0.5, world.size_shared - 0.5)]
 
-    def set_shared(self, shared):
+    def set_shared(self, shared, state):
         self.im_artist.set_data(shared.astype(np.float32))
+        C = self.world.colors
+        texts = self.legend.get_texts()
+        cscores = color_scores(shared, self.world)
+        for i in range(1, C + 1):
+            text = '{} - {}'.format(i, cscores[i])
+            if state.me.multipliers[i] > 0:
+                text += '  +{}'.format(state.me.multipliers[i])
+            if state.you.multipliers[i] > 0:
+                text += '  -{}'.format(state.you.multipliers[i])
+            texts[i - 1].set_text(text)
         self.event_source()
 
 
@@ -539,7 +559,7 @@ async def play_game(shelf, client, window):
         logging.info('Got state')
         shared = await client.get_shared_space(out=shared)
         if window:
-            window.set_shared(shared)
+            window.set_shared(shared, state)
         if state.my_turn:
             logging.info('Got shared')
             own = await client.get_my_space(out=own)
@@ -691,7 +711,7 @@ async def main():
         _do_assertions = True
     if args.vis:
         window = Window(title='B.E.S.T.O.W.')
-        window.set_default_size(768, 768)
+        window.set_default_size(1200, 768)
         window.show_all()
     else:
         window = None
