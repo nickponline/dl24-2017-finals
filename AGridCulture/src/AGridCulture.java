@@ -1122,7 +1122,7 @@ public class AGridCulture
                         try {
                             harvests[i] = getHarvest(x, y);
                         }
-                        catch (ProtocolException e) {
+                        catch (Exception e) {
                             // Ignore failure to harvest errors!
                             //
                             // XXX
@@ -1194,6 +1194,20 @@ public class AGridCulture
         }
     }
     
+    class GoalWorker implements Comparable<GoalWorker>
+    {
+        int x, y, w, d;
+
+        public GoalWorker(int x, int y, int w, int d)
+        {
+            this.x = x; this.y = y; this.w = w; this.d = d;
+        }
+        
+        public int compareTo(GoalWorker that)
+        {
+            return Integer.compare(d,  that.d);
+        }
+    }
     void runHiveMindStrategy()
         throws Exception
     {
@@ -1244,9 +1258,9 @@ public class AGridCulture
         // (or by an opponent's POST and we do not have capacity to replace it).
         for (int i = 0; i < workers.size(); i++) {
             Worker w = workers.get(i);
-            if (w.hiveX != -1 && (map[w.hiveX][w.hiveY] == C || (map[w.hiveX][w.hiveY] != '.' && w.numStored >= G))) {
+            //if (w.hiveX != -1 && (map[w.hiveX][w.hiveY] == C || (map[w.hiveX][w.hiveY] != '.' && w.numStored >= G))) {
                 w.hiveX = w.hiveY = -1;
-            }
+            //}
             w.allocatedToMove = false;
         }
 
@@ -1262,10 +1276,15 @@ public class AGridCulture
         }
         
         // For each worker that does not currently have a goal, assign it one.
+        //
+        // Note, rather than assigning each worker to a goal, we instead create a list of
+        // all the goal/worker pairs that could be assigned, and then allocate them in
+        // order of proximity.
+        List<GoalWorker> options = new ArrayList<>();
         for (int i = 0; i < workers.size(); i++) {
             Worker w = workers.get(i);
             if (w.hiveX == -1) {
-                // See if there is a part of our hive which we can mark -- find the one closest to us.
+                // See if there is a part of our hive which we can mark using this worker.
                 int best = -1, bestX = -1, bestY = -1;
                 for (int x = 0; x < hiveL && w.hiveX == -1; x++) {
                     for (int y = 0; y < hiveL && w.hiveX == -1; y++) {
@@ -1273,20 +1292,27 @@ public class AGridCulture
                         int ny = wrap(hiveY + y);
                         if (!claimedForMove[nx][ny] && (map[nx][ny] == '.' || (map[nx][ny] != C && w.numStored < G))) {
                             int d = w.distance[nx][ny];
-                            if (best < 0 || d < best || (d == best && random.nextBoolean())) {
-                                best = d;
-                                bestX = nx;
-                                bestY = ny;
-                            }
+                            options.add(new GoalWorker(nx, ny, i, d));
                         }
                     }
                 }
-                if (best >= 0) {
-                    w.hiveX = bestX;
-                    w.hiveY = bestY;
-                    claimedForMove[bestX][bestY] = true;
-                }
             }
+        }
+        Collections.sort(options);
+        for (int i = 0; i < options.size(); i++) {
+            GoalWorker g = options.get(i);
+            Worker w = workers.get(g.w);
+            if (w.hiveX == -1 && !claimedForMove[g.x][g.y]) {
+                // We can allocate this cell to this worker.
+                w.hiveX = g.x;
+                w.hiveY = g.y;
+                claimedForMove[g.x][g.y] = true;
+            }
+        }
+        
+        // For any workers that have nothing to do and have full storage, send them out to dump stuff.
+        for (int i = 0; i < workers.size(); i++) {
+            Worker w = workers.get(i);
             if (w.hiveX == -1 && w.numStored >= G) {
                 // Find the closest blank square that we can dump onto.
                 for (int j = 0; j < A; j++) {
@@ -1407,7 +1433,7 @@ public class AGridCulture
                 enemies++;
             }
         }
-        expectedScore -= enemies / 4;
+        //expectedScore -= enemies / 4;
         
         // If none of our workers have spare storage and if they're all idle, then score.
         boolean force = true;
@@ -1417,7 +1443,20 @@ public class AGridCulture
                 force = false;
             }
         }
-        if (force || totalScore >= expectedScore || F < 2) {
+        
+        // If many of our POSTs in the hive are about to expire, then score now.
+        int expire = 0;
+        for (int i = 0; i < hiveL; i++) {
+            for (int j = 0; j < hiveL; j++) {
+                int x = wrap(hiveX + i);
+                int y = wrap(hiveY + j);
+                if (map[x][y] == C && 0 <= markerExpiry[x][y] && markerExpiry[x][y] <= 1) {
+                    expire++;
+                }
+            }
+        }
+        expectedScore -= expire;
+        if (force || totalScore >= expectedScore) {
             // Hit it!
             for (Area area : areas) {
                 if (canExecuteCommand()) {
@@ -1537,7 +1576,8 @@ public class AGridCulture
         double best = -1;
         int bestX = -1, bestY = -1, bestSize = -1;
         System.err.println("Determining best grid location & square size");
-        for (int size = 0; size < A; size++) {
+        int maxSize = Math.min(A,  F / (workers.size() * 2));
+        for (int size = 0; size < maxSize; size++) {
             int num = (size + 1) * (size + 1);
             for (int i = 0; i < A; i++) {
                 for (int j = 0; j < A; j++) {
