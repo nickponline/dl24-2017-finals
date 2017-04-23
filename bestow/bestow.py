@@ -12,6 +12,8 @@ from enum import Enum
 import numpy as np
 import dl24.client
 from dl24.client import command, ProtocolError, Failure
+import dl24.visualization
+import gbulb
 from prometheus_client import Counter, Gauge, Histogram
 
 
@@ -467,14 +469,36 @@ def color_scores(space, world):
     return scores
 
 
+class Window(dl24.visualization.Window):
+    def __init__(self, *args, **kwargs):
+        super(Window, self).__init__(*args, **kwargs)
+        self.im_artist = None
+
+    def set_world(self, world):
+        if self.im_artist is None:
+            img = np.zeros((world.size_shared, world.size_shared), np.float32)
+            img[3:8, 5:20] = 1.0
+            self.im_artist = self.axes.imshow(
+                img, aspect='equal', interpolation='nearest',
+                origin='upper', vmin=0, vmax=world.colors)
+            self.add_artists([self.im_artist])
+        self.min_bounds = [(-0.5, -0.5), (world.size_shared - 0.5, world.size_shared - 0.5)]
+
+    def set_shared(self, shared):
+        self.im_artist.set_data(shared.astype(np.float32))
+        self.event_source()
+
+
 def assert_equal(expected, actual, name):
     if _do_assertions:
         assert expected == actual, "prediction error on {} ({} != {})".format(name, expected, actual)
 
 
-async def play_game(shelf, client):
+async def play_game(shelf, client, window):
     logging.info('Starting game')
     world = await client.describe_world()
+    if window:
+        window.set_world(world)
     try:
         pieces = await client.get_all_pieces()
         logging.info('Shelving %d pieces', len(pieces))
@@ -508,8 +532,10 @@ async def play_game(shelf, client):
 
         used_piece = False
         logging.info('Got state')
+        shared = await client.get_shared_space(out=shared)
+        if window:
+            window.set_shared(shared)
         if state.my_turn:
-            shared = await client.get_shared_space(out=shared)
             logging.info('Got shared')
             own = await client.get_my_space(out=own)
             logging.info('Getting prefix sum')
@@ -641,9 +667,16 @@ async def main():
     dl24.client.add_arguments(parser)
     parser.add_argument('persist', help='File for persisting state')
     parser.add_argument('--assert', dest="assert_", action='store_true', help='Do sanity checks')
+    parser.add_argument('--vis', action='store_true', help='Run visualiser')
     args = parser.parse_args()
     if args.assert_:
         _do_assertions = True
+    if args.vis:
+        window = Window(title='B.E.S.T.O.W.')
+        window.set_default_size(768, 768)
+        window.show_all()
+    else:
+        window = None
 
     shelf = shelve.open(args.persist)
     try:
@@ -653,10 +686,11 @@ async def main():
     client = Client(*connect_args)
     await client.connect()
     while True:
-        await play_game(shelf, client)
+        await play_game(shelf, client, window)
 
 
 if __name__ == '__main__':
+    gbulb.install(gtk=True)
     # Workaround for vext installing log handlers early
     root_logger = logging.getLogger()
     while root_logger.handlers:
