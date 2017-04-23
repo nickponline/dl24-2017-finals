@@ -116,6 +116,10 @@ class PlayerState(object):
             except ValueError as error:
                 raise ProtocolError('Could not parse {}'.format(descr[0]), line) from error
             setattr(self, descr[0], value)
+        self.mcolors = [-1] * 6
+        for i, v in enumerate(self.multipliers):
+            if v > 0:
+                self.mcolors[v] = i
 
 
 class MatchInfo(object):
@@ -217,7 +221,8 @@ class Piece2D(object):
         self.pos = np.array(pos, dtype=np.int8).transpose()
 
 
-Placement = namedtuple('Placement', ['idx', 'own_pos', 'own_orient', 'shared_pos', 'value', 'metric'])
+Placement = namedtuple('Placement',
+    ['idx', 'own_pos', 'own_orient', 'shared_pos', 'shared_orient', 'value', 'metric'])
 
 
 class Client(dl24.client.ClientBase):
@@ -550,7 +555,6 @@ async def play_game(shelf, client, window):
             logging.info('Got metrics')
             avail_idx = await client.get_pieces_in_range()
             avail = [pieces[idx] for idx in avail_idx]
-            avail2d = [pieces2d[idx] for idx in avail_idx]
             best = None
             cash = state.me.budget - state.me.profit_own
             logging.info('Evaluating pieces')
@@ -560,6 +564,8 @@ async def play_game(shelf, client, window):
                 own_pos = None
                 own_orient = None
                 shared_pos = None
+                shared_weight = -1000
+                shared_orient = None
                 own_value = avail[i].value
                 loss = max(0, avail[i].price - cash)
 
@@ -576,10 +582,19 @@ async def play_game(shelf, client, window):
                         own_orient = orient
                         best_hits = hits
 
-                collide = fits2d(shared, avail2d[i])
-                good_y, good_x = collide.nonzero()
-                if len(good_y):
-                    shared_pos = (good_x[0], good_y[0])
+                    piece2d = Piece2D(piece)
+                    weight = 0.1 * len(piece2d.color)  # TODO: tune
+                    weight -= piece2d.color.count(state.you.mcolors[5])
+                    weight += piece2d.color.count(state.you.mcolors[3])
+                    if weight > shared_weight:
+                        collide = fits2d(shared, piece2d)
+                        good_y, good_x = collide.nonzero()
+                        if len(good_y):
+                            shared_weight = weight
+                            shared_orient = orient
+                            shared_pos = (good_x[0], good_y[0])
+                if shared_pos is None:
+                    shared_weight = 0
 
                 if own_pos:
                     value = -loss
@@ -596,12 +611,12 @@ async def play_game(shelf, client, window):
                     scaling = world.good_bonus if q > 0 else world.bad_penalty
                     own_value = int(own_value * (1 + scaling * q))
                     value += own_value
-                    metric = value / avail[i].effort
+                    metric = (value + 0.001 * shared_weight) / avail[i].effort
                     if value > 0:
                         if best is None or metric > best.metric:
                             best = Placement(i, own_pos=own_pos, own_orient=own_orient,
-                                             shared_pos=shared_pos, value=value,
-                                             metric=metric)
+                                             shared_pos=shared_pos, shared_orient=shared_orient,
+                                             value=value, metric=metric)
             logging.info('Done evaluating pieces')
             if best is not None:
                 await client.buy_piece(best.idx + 1)
@@ -613,8 +628,11 @@ async def play_game(shelf, client, window):
                     piece = best.own_orient(avail[best.idx])
                     place3d(own, piece, *best.own_pos)
                 if best.shared_pos:
-                    await client.place_shared_piece(*best.shared_pos, 0, 0, 0)
-                    place2d(shared, avail2d[best.idx], *best.shared_pos)
+                    await client.place_shared_piece(
+                        *best.shared_pos,
+                        best.shared_orient.xs, best.shared_orient.ys, best.shared_orient.zs)
+                    piece2d = Piece2D(best.shared_orient(avail[best.idx]))
+                    place2d(shared, piece2d, *best.shared_pos)
                 used_piece = True
             if used_piece:
                 state.me.effort += avail[best.idx].effort
