@@ -233,10 +233,10 @@ public class AGridCulture
         int MAX;
         int MIN = 4;
         
-        boolean isSuitable(int tx, int ty)
+        boolean isSuitable(int tx, int ty, boolean nonEdge)
         {
             char ch = map[tx][ty];
-            return (ch != C && ch != '#' && nWorkers[tx][ty] == 0 && (ch == '.' || numStored < G));            
+            return (ch != C && ch != '#' && nWorkers[tx][ty] == 0 && (ch == '.' || ((nonEdge && numStored < G - 3) || (!nonEdge && numStored < G))));            
         }
         
         void specialMove(List<Worker> workers)
@@ -345,6 +345,7 @@ public class AGridCulture
                             txl = -1;
                             lastTx = closeX;
                             lastTy = closeY;
+                            evilCounter = 0;
                             return;
                         }
                     }
@@ -385,7 +386,7 @@ public class AGridCulture
             else {
                 int bestSpecial = -1;
                 // Find the cell on our square border that is closest to us and which needs to be marked.
-                if (lastTx != -1 && lastTy != -1 && isSuitable(lastTx, lastTy) && (x != lastTx || y != lastTy)) {
+                if (lastTx != -1 && lastTy != -1 && isSuitable(lastTx, lastTy, lastTx != wrap(tx1) && lastTx != wrap(tx1 + txl) && lastTy != wrap(ty1) && lastTy != wrap(ty1 + txl)) && (x != lastTx || y != lastTy)) {
                     best = distance[lastTx][lastTy];
                     bestX = lastTx;
                     bestY = lastTy;
@@ -413,7 +414,7 @@ public class AGridCulture
                     for (int i = 0; i < txl; i++) {
                         int tx = wrap(tx1);
                         int ty = wrap(ty1 + txl - i);
-                        if (!(cooperative || primaryCoop) && isSuitable(tx, ty)) {
+                        if (!(cooperative || primaryCoop) && isSuitable(tx, ty, false)) {
                             int d = distance[tx][ty];
                             if (best == -1 || d < best) {
                                 best = d;
@@ -425,7 +426,7 @@ public class AGridCulture
                         
                         tx = wrap(tx2);
                         ty = wrap(ty1 + i);
-                        if ((!cooperative || !primaryCoop) && isSuitable(tx, ty)) {
+                        if ((!cooperative || !primaryCoop) && isSuitable(tx, ty, false)) {
                             int d = distance[tx][ty];
                             if (best == -1 || d < best) {
                                 best = d;
@@ -437,7 +438,7 @@ public class AGridCulture
         
                         tx = wrap(tx1 + i);
                         ty = wrap(ty1);
-                        if ((!cooperative || primaryCoop) && isSuitable(tx, ty)) {
+                        if ((!cooperative || primaryCoop) && isSuitable(tx, ty, false)) {
                             int d = distance[tx][ty];
                             if (best == -1 || d < best) {
                                 best = d;
@@ -449,7 +450,7 @@ public class AGridCulture
         
                         tx = wrap(tx1 + txl - i);
                         ty = wrap(ty2);
-                        if ((!cooperative || !primaryCoop) && isSuitable(tx, ty)) {
+                        if ((!cooperative || !primaryCoop) && isSuitable(tx, ty, false)) {
                             int d = distance[tx][ty];
                             if (best == -1 || d < best) {
                                 best = d;
@@ -510,7 +511,7 @@ public class AGridCulture
                         for (int j = 0; j <= txl; j++) {
                             int tx = wrap(tx1 + i);
                             int ty = wrap(ty1 + j);
-                            if ((!cooperative || ((i + j <= txl) == primaryCoop)) && isSuitable(tx, ty)) {
+                            if ((!cooperative || ((i + j <= txl) == primaryCoop)) && isSuitable(tx, ty, true)) {
                                 int d = distance[tx][ty];
                                 if (best == -1 || d < best) {
                                     best = d;
@@ -1335,7 +1336,7 @@ public class AGridCulture
         Collections.sort(areas);
         for (Area area : areas) {
             // How big a size do we want before we harvest?
-            if (area.x.length > 10 && canExecuteCommand()) {
+            if (area.x.length > 5 && canExecuteCommand()) {
                 // Yum!
                 System.err.println("Harvesting at " + area.sx + " " + area.sy + " with size of " + area.x.length);
                 client.writeCommand("SCORE", area.sx, area.sy);
