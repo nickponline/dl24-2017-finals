@@ -164,6 +164,7 @@ class Orientation(object):
         if hasattr(piece2, 'lower'):
             delattr(piece2, 'lower')
             delattr(piece2, 'upper')
+            piece2.centroid = self.mat @ piece.centroid
         return piece2
 
 
@@ -314,6 +315,7 @@ def fix_piece(piece):
     if not hasattr(piece, 'lower'):
         piece.lower = np.min(piece.pos, axis=1)
         piece.upper = np.max(piece.pos, axis=1)
+        piece.centroid = np.mean(piece.pos, axis=1)
 
 
 OPERATION_TIME_fits2d = OPERATION_TIME.labels('fits2d')
@@ -685,7 +687,7 @@ async def play_game(shelf, client, window):
                     hits = np.max(fitness)
                     if hits > own_hits:
                         good = np.array(np.nonzero(fitness == hits))
-                        good_close = np.max(np.abs(good - world.size_own / 2), axis=0)
+                        good_close = np.max(np.abs(good + piece.centroid[:, np.newaxis] - world.size_own / 2), axis=0)
                         good_idx = np.argmin(good_close)
                         own_pos = list(reversed(good[:, good_idx]))
                         own_orient = orient
@@ -722,6 +724,9 @@ async def play_game(shelf, client, window):
                     own_value = int(own_value * (1 + scaling * q))
                     value += own_value
                     metric = (value + world.shared_coeff * shared_hits) / avail[i].effort
+                    # If we can grab a spare 1x1x1, do so
+                    if (state.me.effort + avail[i].effort) // world.effort_period > state.you.effort // world.effort_period:
+                        metric += 1e5
                     if value > 0:
                         if best is None or metric > best.metric:
                             best = Placement(i, own_pos=own_pos, own_orient=own_orient,
