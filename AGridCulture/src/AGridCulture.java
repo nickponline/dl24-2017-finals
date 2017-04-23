@@ -61,7 +61,10 @@ public class AGridCulture
         int lastTx, lastTy;
         int specialInd;
         int evilCounter;
-
+        Worker cooperator;
+        boolean cooperative;
+        boolean primaryCoop;
+        
         Worker(int id, int x, int y)
         {
             this.id = id;
@@ -77,10 +80,22 @@ public class AGridCulture
             storage[numStored++] = color;
         }
         
+        void makeSpecialCooperator(Worker cooperator)
+        {
+            special = true;
+            this.cooperator = cooperator; 
+            cooperative = cooperator.cooperative = true;
+            primaryCoop = false;
+            cooperator.primaryCoop = true;
+            lastTx = lastTy = -1;
+            specialInd = -1;
+        }
+
         void makeSpecial(List<Worker> workers)
         {
             MAX = Math.max((int) Math.sqrt(A * A / ((workers.size() + enemyWorkers.size()) / 2 + 1)), 7);
             special = true;
+            cooperative = false;
             
             // If our worker is too close to some of our other workers, then move it away to a random location.
             for (int i = 0; i < workers.size(); i++) {
@@ -230,7 +245,8 @@ public class AGridCulture
             nextX = x;
             nextY = y;
             
-            if (txl < MIN) {
+            //if ((!cooperative || primaryCoop) && 
+            if (cooperator == null && txl < MIN) {
                 // If we could not get a local square with a useful size, then we should go searching for one.
                 if (lastTx != -1) {
                     // We already have a target in mind.
@@ -266,34 +282,81 @@ public class AGridCulture
             }
             
             // Check whether we are besieged by evil forces.
-            boolean evilLurks = false;
-            for (int i = 0; i < enemyWorkers.size(); i++) {
-                EnemyWorker worker = enemyWorkers.get(i);
-                if (distance[worker.x][worker.y] < txl) {
-                    evilLurks = true;
-                    break;
-                }
-            }
-            if (evilLurks) {
-                evilCounter++;
-                if (evilCounter >= 3 * txl) {
-                    // Relocate. Do a flood fill from all enemies to find somewhere that is sufficiently far
-                    // away from them and close to us.
-                    int qt = 0;
-                    int qh = 0;
-                    for (int i = 0; i < enemyWorkers.size(); i++) {
-                        
+            if (!cooperative || primaryCoop) {
+                boolean evilLurks = false;
+                for (int i = 0; i < enemyWorkers.size(); i++) {
+                    EnemyWorker worker = enemyWorkers.get(i);
+                    if (distance[worker.x][worker.y] < txl) {
+                        evilLurks = true;
+                        break;
                     }
-                    
+                }
+                if (evilLurks) {
+                    evilCounter++;
+                    if (evilCounter >= 3 * txl) {
+                        // Relocate. Do a flood fill from all enemies to find somewhere that is sufficiently far
+                        // away from them and close to us.
+                        specialWriter.println("We're under attack!");
+                        specialWriter.flush();
+                        int qt = 0;
+                        int qh = 0;
+                        for (int i = 0; i < A; i++) {
+                            Arrays.fill(evilDist[i], -1);
+                        }
+                        for (int i = 0; i < enemyWorkers.size(); i++) {
+                            int ex = enemyWorkers.get(i).x;
+                            int ey = enemyWorkers.get(i).y;
+                            if (evilDist[ex][ey] < 0) {
+                                qx[qh] = ex;
+                                qy[qh] = ey;
+                                evilDist[ex][ey] = 0;
+                                qh++;
+                            }
+                        }
+                        int close = -1, closeX = -1, closeY = -1;
+                        while (qt < qh) {
+                            int curx = qx[qt];
+                            int cury = qy[qt];
+                            qt++;
+                            for (int c = 0; c < 4; c++) {
+                                int nx = curx + CX[c];
+                                int ny = cury + CY[c];
+                                if (nx < 0) nx += A;
+                                if (nx >= A) nx -= A;
+                                if (ny < 0) ny += A;
+                                if (ny >= A) ny -= A;
+                                if (evilDist[nx][ny] < 0) {
+                                    evilDist[nx][ny] = evilDist[curx][cury] + 1;
+                                    qx[qh] = nx;
+                                    qy[qh] = ny;
+                                    qh++;
+                                    if ((evilDist[nx][ny] > 2 * txl) && (close < 0 || distance[nx][ny] < close)) {
+                                        close = distance[nx][ny];
+                                        closeX = nx;
+                                        closeY = ny;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if (close > 0) {
+                            // We have somewhere to flee to, so let's do it.
+                            specialWriter.println("Worker " + id + " fleeing from evil at " + x + " " + y + " to " + closeX + " " + closeY);
+                            txl = -1;
+                            lastTx = closeX;
+                            lastTy = closeY;
+                            return;
+                        }
+                    }
+                }
+                else {
+                    evilCounter--;
+                    if (evilCounter < 0) {
+                        evilCounter = 0;
+                    }
                 }
             }
-            else {
-                evilCounter--;
-                if (evilCounter < 0) {
-                    evilCounter = 0;
-                }
-            }
-
+            
             int best = -1;
             int bestX = -1, bestY = -1;
             if (specialInd != -1) {
@@ -328,10 +391,29 @@ public class AGridCulture
                     bestY = lastTy;
                 }
                 else {
+                    if (cooperative && !primaryCoop) {
+                        // Copy parameters from our primary co-op partner.
+                        tx1 = cooperator.tx1;
+                        ty1 = cooperator.ty1;
+                        tx2 = cooperator.tx2;
+                        ty2 = cooperator.ty2;
+                        txl = cooperator.txl;
+                        if (txl < 0) {
+                            // Looks like our co-op partner is being relocated... let's follow them.
+                            if ((x != cooperator.x || y != cooperator.y) && canExecuteCommand()) {
+                                specialWriter.println("Worker " + id + " following cooperator from " + x + " " + y + " to " + cooperator.x + " " + cooperator.y);
+                                client.writeCommand("MOVE", id, dirX[cooperator.x][cooperator.y], dirY[cooperator.x][cooperator.y]);
+                                nextX = wrap(x + dirX[cooperator.x][cooperator.y]);
+                                nextY = wrap(y + dirY[cooperator.x][cooperator.y]);
+                                specialWriter.println("Next is " + nextX + " " + nextY);
+                                return;
+                            }
+                        }
+                    }
                     for (int i = 0; i < txl; i++) {
                         int tx = wrap(tx1);
                         int ty = wrap(ty1 + txl - i);
-                        if (isSuitable(tx, ty)) {
+                        if (!(cooperative || primaryCoop) && isSuitable(tx, ty)) {
                             int d = distance[tx][ty];
                             if (best == -1 || d < best) {
                                 best = d;
@@ -343,7 +425,7 @@ public class AGridCulture
                         
                         tx = wrap(tx2);
                         ty = wrap(ty1 + i);
-                        if (isSuitable(tx, ty)) {
+                        if ((!cooperative || !primaryCoop) && isSuitable(tx, ty)) {
                             int d = distance[tx][ty];
                             if (best == -1 || d < best) {
                                 best = d;
@@ -355,7 +437,7 @@ public class AGridCulture
         
                         tx = wrap(tx1 + i);
                         ty = wrap(ty1);
-                        if (isSuitable(tx, ty)) {
+                        if ((!cooperative || primaryCoop) && isSuitable(tx, ty)) {
                             int d = distance[tx][ty];
                             if (best == -1 || d < best) {
                                 best = d;
@@ -367,7 +449,7 @@ public class AGridCulture
         
                         tx = wrap(tx1 + txl - i);
                         ty = wrap(ty2);
-                        if (isSuitable(tx, ty)) {
+                        if ((!cooperative || !primaryCoop) && isSuitable(tx, ty)) {
                             int d = distance[tx][ty];
                             if (best == -1 || d < best) {
                                 best = d;
@@ -428,7 +510,7 @@ public class AGridCulture
                         for (int j = 0; j <= txl; j++) {
                             int tx = wrap(tx1 + i);
                             int ty = wrap(ty1 + j);
-                            if (isSuitable(tx, ty)) {
+                            if ((!cooperative || ((i + j <= txl) == primaryCoop)) && isSuitable(tx, ty)) {
                                 int d = distance[tx][ty];
                                 if (best == -1 || d < best) {
                                     best = d;
@@ -447,8 +529,10 @@ public class AGridCulture
                     }
                     else {
                         // If we get here, then we probably need to relocate.
-                        txl = -1;
-                        lastTx = lastTy = -1;
+                        if (!cooperative || primaryCoop) {
+                            txl = -1;
+                            lastTx = lastTy = -1;
+                        }
                     }
                 }
             }
@@ -916,7 +1000,13 @@ public class AGridCulture
                         workers.add(worker);
                         if (i < numSpecial) {
                             // Make this a special worker.
-                            worker.makeSpecial(workers);
+                            if ((i % 2) == 0) {
+                                worker.makeSpecial(workers);
+                            }
+                            else {
+                                // Make this a cooperator.
+                                worker.makeSpecialCooperator(workers.get(i - 1));
+                            }
                         }
                     }
                 }
@@ -1245,7 +1335,7 @@ public class AGridCulture
         Collections.sort(areas);
         for (Area area : areas) {
             // How big a size do we want before we harvest?
-            if (area.x.length > 3 && canExecuteCommand()) {
+            if (area.x.length > 10 && canExecuteCommand()) {
                 // Yum!
                 System.err.println("Harvesting at " + area.sx + " " + area.sy + " with size of " + area.x.length);
                 client.writeCommand("SCORE", area.sx, area.sy);
