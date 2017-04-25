@@ -1,0 +1,37 @@
+version: '2'
+services:
+    prometheus:
+        image: prom/prometheus:v1.6.1
+        volumes:
+            - ./prometheus.yml:/etc/prometheus/prometheus.yml
+            - prometheus_data:/prometheus
+        ports:
+            - 9090:9090
+        networks:
+            - backend
+        extra_hosts:
+            - "hydra:10.24.24.35"
+            - "sniper:10.24.24.39"
+            - "nick:10.24.24.38"
+
+    grafana:
+        image: grafana/grafana:4.2.0
+        volumes:
+            - grafana_data:/var/lib/grafana
+        depends_on:
+            - prometheus
+        ports:
+            - 3000:3000
+        environment:
+            GF_SECURITY_ADMIN_PASSWORD: 34imm3rr
+            GF_USERS_ALLOW_SIGN_UP: "false"
+            GF_AUTH_ANONYMOUS_ENABLED: "true"
+        networks:
+            - backend
+
+volumes:
+    prometheus_data: {}
+    grafana_data: {}
+
+networks:
+    backend: {}

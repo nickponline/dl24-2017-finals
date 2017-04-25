@@ -1,0 +1,45 @@
+global:
+    scrape_interval: 1s
+
+scrape_configs:
+    - job_name: 'prometheus'
+      static_configs:
+          #- targets: ['localhost:9090']
+          #  labels:
+          #      service: prometheus
+          - targets: ['sniper:6011']
+            labels:
+                service: problem1
+                subproblem: 1
+          - targets: ['sniper:6012']
+            labels:
+                service: problem1
+                subproblem: 2
+          - targets: ['sniper:6013']
+            labels:
+                service: problem1
+                subproblem: 3
+          - targets: ['hydra:6021']
+            labels:
+                service: problem2
+                subproblem: 1
+          - targets: ['hydra:6022']
+            labels:
+                service: problem2
+                subproblem: 2
+          - targets: ['hydra:6023']
+            labels:
+                service: problem2
+                subproblem: 3
+          - targets: ['nick:6031']
+            labels:
+                service: problem3
+                subproblem: 1
+          - targets: ['nick:6032']
+            labels:
+                service: problem3
+                subproblem: 2
+          - targets: ['nick:6033']
+            labels:
+                service: problem3
+                subproblem: 3
